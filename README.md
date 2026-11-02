@@ -251,8 +251,8 @@ docker build -f web/Dockerfile -t fake_tiktok-web:latest web
 # 1. 先由 manifest 仓库/平台侧准备好 MySQL / Redis / Kafka / MinIO / otel-collector，并建好三个库
 # 2. 拉取 manifest 仓库，安装业务负载（镜像已在 Harbor 后可直接用 values-prod.yaml）
 git clone https://github.com/phx3334/micro-bl--manifest
-helm upgrade --install fake-tiktok micro-bl--manifest/deploy/helm/fake-tiktok \
-  -f micro-bl--manifest/deploy/helm/fake-tiktok/values-prod.yaml \
+helm upgrade --install fake-tiktok micro-bl--manifest/apps/fake-tiktok \
+  -f micro-bl--manifest/apps/fake-tiktok/values-prod.yaml \
   --set secret.existingSecret=fake-tiktok-secrets \
   -n fake-tiktok --create-namespace
 
