@@ -1,16 +1,12 @@
 package otelx
 
 import (
-	"context"
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -21,32 +17,22 @@ const (
 	SpanIDKey  = "span_id"
 )
 
-// GinMiddleware 是自研的 HTTP 埋点中间件（不引入 contrib/otelgin），一次遍历同时产出：
-//   - server span（可在 Tempo 中与下游 gRPC / MySQL / Redis 子 span 串起来）
-//   - RED 指标：Requests 总数、Errors 数、Duration 直方图
+// GinMiddleware 是自研的 HTTP 埋点中间件（不引入 contrib/otelgin），产出 server span：
+//   - 与下游 gRPC / MySQL / Redis 子 span 在 Tempo 中串成完整链路
+//   - RED 指标（calls_total、duration 直方图）不在这里记：由 otel-collector 的
+//     spanmetrics connector 从这些 span 派生，且必须在进尾采之前派生（见 config.yaml）
 //
 // 必须注册在 GinLogger 之前：日志中间件依赖本中间件写回请求 ctx 与 trace_id。
 func GinMiddleware() gin.HandlerFunc {
 	tracer := otel.Tracer("fake_tiktok/http")
-	meter := otel.Meter("fake_tiktok/http")
-
-	requestsTotal, _ := meter.Int64Counter("http_server_requests_total",
-		metric.WithDescription("HTTP 请求总数（RED 中的 Rate/Requests）"))
-	requestDuration, _ := meter.Float64Histogram("http_server_request_duration_seconds",
-		metric.WithDescription("HTTP 请求耗时（秒）"),
-		metric.WithUnit("s"))
-	errorsTotal, _ := meter.Int64Counter("http_server_errors_total",
-		metric.WithDescription("HTTP 5xx 错误总数（RED 中的 Errors）"))
 
 	return func(c *gin.Context) {
-		start := time.Now()
-
 		// 1. 续接上游链路：有 traceparent 就复用 trace，没有则新建。
 		//    Extract 到 request ctx 后，下游 gRPC/DB/Redis 调用都会自动带上同一 trace_id。
 		ctx := otel.GetTextMapPropagator().Extract(c.Request.Context(),
 			propagation.HeaderCarrier(c.Request.Header))
 
-		// 2. 路由模板而非真实路径：/api/v1/video/:id 这类模板能避免指标 label 基数爆炸。
+		// 2. 路由模板而非真实路径：/api/v1/video/:id 这类模板能避免 span 属性基数爆炸。
 		route := c.FullPath()
 		if route == "" {
 			route = "unmatched"
@@ -62,6 +48,18 @@ func GinMiddleware() gin.HandlerFunc {
 			),
 		)
 		defer span.End()
+		// panic 穿过本中间件时（GinRecovery 注册在更外层，要等这里重抛后才恢复），
+		// 下面 c.Next() 之后的状态回写不会执行——不兜底则 panic 的 span 缺
+		// http.status_code、无 ERROR 状态：spanmetrics 少算 5xx（进程 SLO 告警失明）、
+		// 尾采 errors 策略不保留该链路。外层 GinRecovery 必把 panic 转成 HTTP 500，
+		// 据此补状态后原样重抛，响应与错误日志仍由 Recovery 统一负责。
+		defer func() {
+			if r := recover(); r != nil {
+				span.SetAttributes(attribute.Int("http.status_code", http.StatusInternalServerError))
+				span.SetStatus(codes.Error, http.StatusText(http.StatusInternalServerError))
+				panic(r)
+			}
+		}()
 
 		// 3. 把带 span 的 ctx 放回请求，业务取 c.Request.Context() 即自动继承链路。
 		c.Request = c.Request.WithContext(ctx)
@@ -75,29 +73,11 @@ func GinMiddleware() gin.HandlerFunc {
 
 		c.Next()
 
+		// 5. status 打到 span 上：spanmetrics 据此算错误率，尾采据此必留错误链路。
+		//    5xx 额外标 span 失败（HTTP 200 的业务失败由业务代码自己 SetStatus）。
 		status := c.Writer.Status()
-		statusStr := strconv.Itoa(status)
 		span.SetAttributes(attribute.Int("http.status_code", status))
-
-		// 5. 指标用独立 context.Background：请求被客户端取消时 ctx 已 Done，
-		//    继续用请求 ctx 记录可能被 SDK 丢弃，导致统计少算。
-		metricCtx := context.Background()
-		requestsTotal.Add(metricCtx, 1, metric.WithAttributes(
-			attribute.String("method", c.Request.Method),
-			attribute.String("route", route),
-			attribute.String("status", statusStr),
-		))
-		requestDuration.Record(metricCtx, time.Since(start).Seconds(), metric.WithAttributes(
-			attribute.String("method", c.Request.Method),
-			attribute.String("route", route),
-		))
 		if status >= http.StatusInternalServerError {
-			errorsTotal.Add(metricCtx, 1, metric.WithAttributes(
-				attribute.String("method", c.Request.Method),
-				attribute.String("route", route),
-				attribute.String("status", statusStr),
-			))
-			// 5xx 标记 span 失败，Tempo 里可直接按状态筛选
 			span.SetStatus(codes.Error, http.StatusText(status))
 		}
 	}

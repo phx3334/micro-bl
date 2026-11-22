@@ -12,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"fake_tiktok/pkg/otelx"
 )
 
 // GinLogger 返回 Gin 请求日志中间件，使用依赖注入的 logger
@@ -22,7 +24,9 @@ func GinLogger(logger *zap.Logger) gin.HandlerFunc {
 		query := c.Request.URL.RawQuery
 		c.Next()
 		cost := time.Since(start)
-		logger.Info(path,
+		// trace_id 由上游 otelx.GinMiddleware 写入请求 ctx；访问日志带上它，
+		// Loki 才能按 trace_id 与 Tempo 互跳（指标 → 链路 → 日志的最后一环）
+		otelx.Logger(logger, c.Request.Context()).Info(path,
 			zap.Int("status", c.Writer.Status()),
 			zap.String("method", c.Request.Method),
 			zap.String("path", path),
@@ -63,18 +67,20 @@ func GinRecovery(logger *zap.Logger) gin.HandlerFunc {
 					return
 				}
 
-				logger.Error("[Recovery from panic]",
+				// 带 trace_id 记录：panic 链路可在 Tempo 按 trace 串起前后日志
+				otelx.Logger(logger, c.Request.Context()).Error("[Recovery from panic]",
 					zap.Any("error", err),
 					zap.String("request", string(httpRequest)),
 					zap.String("stack", string(debug.Stack())),
 				)
 
 				// 返回 JSON 格式的错误信息，使前端能显示具体的错误提示
-				// 而非仅收到 500 状态码无响应体
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-					"code": 4,
-					"data": nil,
-					"msg":  fmt.Sprintf("服务器内部错误: %v", err),
+				// 而非仅收到 500 状态码无响应体。
+				// code 用字符串细分码：panic 是服务端缺陷，与业务失败（数字 4）区分开
+				c.AbortWithStatusJSON(http.StatusInternalServerError, Response{
+					Code: "PANIC",
+					Data: nil,
+					Msg:  fmt.Sprintf("服务器内部错误: %v", err),
 				})
 			}
 		}()

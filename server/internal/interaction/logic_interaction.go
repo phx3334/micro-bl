@@ -2,11 +2,13 @@ package interaction
 
 import (
 	"context"
-	"fmt"
 
 	"fake_tiktok/internal/dto/request"
+	"fake_tiktok/pkg/apperr"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type InteractionLogic struct {
@@ -23,10 +25,19 @@ func NewInteractionLogic(deps *LogicDeps) *InteractionLogic {
 //
 // 原实现直接读本地 videos 表；拆库后 videos 在 feed_video，交互前必须
 // 先确认目标视频真实存在（否则会留下指向不存在视频的点赞记录）。
+//
+// 分类要点：下游返回 NotFound 才是"视频不存在"（业务错误，200）；
+// 连不上 / 超时是 video-svc 故障（系统错误，500），不能一起报成"不存在"。
 func (i *InteractionLogic) ensureVideoExists(ctx context.Context, videoID uint) error {
 	video, err := i.deps.VideoClient.GetVideo(ctx, uint64(videoID))
-	if err != nil || video == nil {
-		return fmt.Errorf("视频不存在")
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return apperr.Business("视频不存在")
+		}
+		return apperr.RPC("查询视频失败", err)
+	}
+	if video == nil {
+		return apperr.Business("视频不存在")
 	}
 	return nil
 }
@@ -62,7 +73,7 @@ func (i *InteractionLogic) LikeVideo(ctx context.Context, req request.Interactio
 		if mysqlErr != nil {
 			i.deps.Logger.Error("MySQL 降级点赞失败",
 				zap.String("user_id", userID), zap.Uint("video_id", videoID), zap.Error(mysqlErr))
-			return fmt.Errorf("点赞服务暂时不可用，请稍后重试")
+			return apperr.DB("点赞服务暂时不可用，请稍后重试", mysqlErr)
 		}
 
 		// created=false 表示记录已存在（幂等），无需发 MQ 增量
@@ -91,7 +102,7 @@ func (i *InteractionLogic) LikeVideo(ctx context.Context, req request.Interactio
 			i.deps.Logger.Error("回滚 Redis SET 失败，可能存在数据不一致",
 				zap.String("userID", userID), zap.Uint("videoID", videoID), zap.Error(rollbackErr))
 		}
-		return fmt.Errorf("点赞失败，请稍后重试")
+		return apperr.DB("点赞失败，请稍后重试", err)
 	}
 
 	// created=false：SET 过期后 SADD 返回 added=true，但 MySQL 中记录已存在
@@ -139,7 +150,7 @@ func (i *InteractionLogic) UnlikeVideo(ctx context.Context, req request.Interact
 	// 2. MySQL 删除
 	deleted, err := i.deps.InteractionRepo.DeleteVideoLike(ctx, userID, videoID)
 	if err != nil {
-		return fmt.Errorf("取消点赞失败，请稍后重试")
+		return apperr.DB("取消点赞失败，请稍后重试", err)
 	}
 
 	// deleted=false：原本未点赞，幂等返回

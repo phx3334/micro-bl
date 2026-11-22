@@ -1,6 +1,9 @@
 // 统一响应类型
+// code 是联合类型：数字 3/4 是业务语义（成功/业务失败，HTTP 200），
+// 字符串细分码（DB_CONNECT_FAIL、PANIC 等）只出现在系统错误（HTTP 500），
+// 由 axios error 分支读取，不会走到下面的 res.code === 3 判断。
 export interface ApiResponse<T = any> {
-  code: 3 | 4 // 3=成功, 4=失败
+  code: 3 | 4 | string
   data: T
   msg: string
 }

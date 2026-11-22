@@ -5,10 +5,21 @@ import { logout as logoutApi, getUserInfo } from '@/api/user'
 const TOKEN_KEY = 'fake_bili_token'
 const USER_KEY = 'fake_bili_user'
 
+// 安全读取本地缓存：localStorage 数据被写坏时 JSON.parse 会抛异常，
+// 若放在 state 初始化里会直接导致应用启动崩溃
+function loadCachedUser(): Account | null {
+  try {
+    return JSON.parse(localStorage.getItem(USER_KEY) || 'null') as Account | null
+  } catch {
+    localStorage.removeItem(USER_KEY)
+    return null
+  }
+}
+
 export const useUserStore = defineStore('user', {
   state: () => ({
     token: localStorage.getItem(TOKEN_KEY) || '',
-    userInfo: JSON.parse(localStorage.getItem(USER_KEY) || 'null') as Account | null,
+    userInfo: loadCachedUser(),
   }),
 
   getters: {
@@ -16,7 +27,7 @@ export const useUserStore = defineStore('user', {
   },
 
   actions: {
-    setToken(token: string, expire: number) {
+    setToken(token: string) {
       this.token = token
       localStorage.setItem(TOKEN_KEY, token)
     },

@@ -51,6 +51,8 @@ function handleFileChange(e: Event) {
   const target = e.target as HTMLInputElement
   if (target.files && target.files[0]) {
     videoFile.value = target.files[0]
+    // 换文件时终止上一个视频的转码状态轮询，避免旧轮询回填 status
+    stopPolling()
     videoId.value = null
     status.value = null
     uploadProgress.value = 0
@@ -120,19 +122,42 @@ async function handleUpload() {
   }
 }
 
+// 轮询会话令牌：stopPolling / 新一轮 startPolling 都会使其失效，
+// 让仍在飞行中的 tick 回来后直接放弃，避免“清除了轮询却被在途请求重新拉起”以及
+// 组件卸载后继续轮询（内存泄漏）
+let pollToken = 0
+// 连续查询失败上限，避免接口持续报错时无限轮询
+const MAX_POLL_FAILURES = 5
+
 function startPolling() {
   stopPolling()
+  const token = ++pollToken
+  let failures = 0
   const tick = async () => {
-    if (!videoId.value) return
+    if (token !== pollToken || !videoId.value) return
     try {
       const s = await getVideoStatus(videoId.value)
+      if (token !== pollToken) return
       status.value = s
+      failures = 0
       if (s.status === 'published' || s.status === 'failed') {
         stopPolling()
         return
       }
     } catch {
-      // 轮询错误忽略，继续重试
+      if (token !== pollToken) return
+      failures += 1
+      // 连续失败达上限：停止轮询并给出失败状态，否则会永远转圈
+      if (failures >= MAX_POLL_FAILURES) {
+        stopPolling()
+        status.value = {
+          status: 'failed',
+          fail_reason: '转码状态查询失败，请稍后刷新重试',
+          video_url: '',
+          cover_url: '',
+        }
+        return
+      }
     }
     pollingTimer.value = window.setTimeout(tick, 3000)
   }
@@ -140,6 +165,7 @@ function startPolling() {
 }
 
 function stopPolling() {
+  pollToken++
   if (pollingTimer.value) {
     clearTimeout(pollingTimer.value)
     pollingTimer.value = null

@@ -6,7 +6,10 @@ package redisx
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
@@ -14,6 +17,7 @@ import (
 
 	"fake_tiktok/pkg/config"
 	"fake_tiktok/pkg/otelx"
+	"fake_tiktok/pkg/tlsx"
 )
 
 // RedisConn 封装 Redis 连接和键前缀配置。
@@ -47,23 +51,61 @@ type RedisConn struct {
 //	若 AOF/RDB 都未启用, 仅输出 Warn 日志, 不阻断启动
 //	(本地开发或测试环境可能故意不挂 redis.conf)。
 func ConnectRedis(redis_cfg *config.RedisConfig) (*RedisConn, error) {
-	// 构造客户端选项: 地址 / 密码 / DB
-	opts := &redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", redis_cfg.Host, redis_cfg.Port),
-		Password: redis_cfg.Password,
-		DB:       redis_cfg.DB,
+	// 单向 TLS：只校验服务端（Redis 不要求客户端证书）。
+	// 注意：服务端开启 TLS 后 6379/26379 只接受 TLS，这里的开关必须与服务端一致。
+	var tlsCfg *tls.Config
+	if redis_cfg.TLSEnabled {
+		serverName := redis_cfg.TLSServerName
+		if serverName == "" {
+			serverName = tlsx.ServerName(redis_cfg.Host)
+		}
+		var err error
+		tlsCfg, err = tlsx.ClientConfig(redis_cfg.TLSCAFile, serverName)
+		if err != nil {
+			return nil, fmt.Errorf("redis tls config: %w", err)
+		}
 	}
-	client := redis.NewClient(opts)
 
-	// 先做 Ping 确认网络可达; 失败时返回错误，避免后续使用 nil *RedisConn 导致 panic
-	_, err := client.Ping(context.Background()).Result()
+	// 有哨兵地址走 FailoverClient（主从自动切换），否则直连（本地开发）。
+	// 哨兵与数据节点共用同一套 TLS 配置和密码：
+	//   - SentinelPassword 显式复用 Password，避免 chart 开启 auth.sentinel 后认证失败；
+	//   - TLS ServerName 固定为服务名（证书 SAN），主节点漂移后仍然验签通过。
+	sentinels := parseSentinelAddrs(redis_cfg.SentinelAddrs)
+	var client *redis.Client
+	if len(sentinels) > 0 {
+		masterName := redis_cfg.MasterName
+		if masterName == "" {
+			masterName = "mymaster"
+		}
+		client = redis.NewFailoverClient(&redis.FailoverOptions{
+			MasterName:       masterName,
+			SentinelAddrs:    sentinels,
+			Password:         redis_cfg.Password,
+			SentinelPassword: redis_cfg.Password,
+			DB:               redis_cfg.DB,
+			TLSConfig:        tlsCfg,
+		})
+	} else {
+		client = redis.NewClient(&redis.Options{
+			Addr:      fmt.Sprintf("%s:%d", redis_cfg.Host, redis_cfg.Port),
+			Password:  redis_cfg.Password,
+			DB:        redis_cfg.DB,
+			TLSConfig: tlsCfg,
+		})
+	}
+
+	// 先做 Ping 确认网络可达; 失败时返回错误，避免后续使用 nil *RedisConn 导致 panic。
+	// 必须带超时：Redis 地址不可达时若用 Background，TCP 黑洞会让启动永久挂住。
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer pingCancel()
+	_, err := client.Ping(pingCtx).Result()
 	if err != nil {
 		zap.L().Error("连接Redis失败", zap.Error(err))
 		return nil, fmt.Errorf("redis ping failed: %w", err)
 	}
 
-	// 启动后探测持久化配置, 失败仅 Warn 不阻断
-	verifyPersistence(context.Background(), client)
+	// 启动后探测持久化配置, 失败仅 Warn 不阻断（同样带超时）
+	verifyPersistence(pingCtx, client)
 
 	// Redis 自动埋点：go-redis hook 在每条命令前创建子 span。
 	// OTel 关闭时不挂载，连接行为与原实现完全一致（零开销）。
@@ -74,6 +116,23 @@ func ConnectRedis(redis_cfg *config.RedisConfig) (*RedisConn, error) {
 	}
 
 	return &RedisConn{Client: client, KeyPrefix: redis_cfg.KeyPrefix}, nil
+}
+
+// parseSentinelAddrs 把逗号分隔的哨兵地址拆成切片（去空白、忽略空项）。
+// 返回空切片表示未配置哨兵，调用方走直连模式。
+func parseSentinelAddrs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	addrs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			addrs = append(addrs, p)
+		}
+	}
+	return addrs
 }
 
 // verifyPersistence 探测 Redis 服务端的持久化策略并输出诊断日志。

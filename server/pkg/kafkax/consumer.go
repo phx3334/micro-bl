@@ -9,6 +9,7 @@ import (
 	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
 
+	"fake_tiktok/pkg/config"
 	"fake_tiktok/pkg/otelx"
 )
 
@@ -16,14 +17,23 @@ import (
 //
 // kafka-go 的 Reader 内部处理分区分配、心跳和断线重连，因此 worker 不再需要
 // 自己写"外层重订阅循环"；ctx 取消后调用 Close 即可优雅退出。
-func NewReader(brokers []string, topic, groupID string) *kafka.Reader {
-	return kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  brokers,
+// TLS 开启时给 Dialer 挂上"只验服务端"的配置；文件缺失直接返回错误，启动期暴露。
+func NewReader(cfg *config.KafkaConfig, topic, groupID string) (*kafka.Reader, error) {
+	tlsCfg, err := tlsConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	rc := kafka.ReaderConfig{
+		Brokers:  cfg.Brokers,
 		Topic:    topic,
 		GroupID:  groupID,
 		MinBytes: 1,        // 有消息就返回，降低聚合延迟
 		MaxBytes: 10 << 20, // 单次拉取上限 10MB，避免一次拉取过大占内存
-	})
+	}
+	if tlsCfg != nil {
+		rc.Dialer = &kafka.Dialer{TLS: tlsCfg}
+	}
+	return kafka.NewReader(rc), nil
 }
 
 // Consume 是通用消费循环：FetchMessage → handler → CommitMessages。

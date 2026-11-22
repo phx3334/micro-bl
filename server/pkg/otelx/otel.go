@@ -6,17 +6,24 @@
 //
 // 数据流：
 //   - Trace：OTLP gRPC → otel-collector → Tempo
-//   - Metric：SDK 写入 Prometheus exporter 的默认 registry，由 /metrics 被 Prometheus 抓取
+//   - Metric：OTLP gRPC → otel-collector，由 collector 的 prometheus exporter 统一暴露给 Prometheus
+//
+// 为什么 Metric 也走推送：四个进程各自暴露 /metrics 会让 Prometheus 的抓取目标随副本数增长，
+// 而且 Istio 开 STRICT mTLS 后还要给每个端口放开例外；收敛到 collector 一个抓取点更省事。
+// 代价是丢掉 per-pod 维度，改由 resource 属性（service_name）标识服务，见 collector 的
+// resource_to_telemetry_conversion。
 package otelx
 
 import (
 	"context"
 	"errors"
 	"sync/atomic"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -52,7 +59,13 @@ func Tracer(scope string) trace.Tracer {
 	return otel.Tracer(scope)
 }
 
-// Init 初始化 TracerProvider（OTLP gRPC → collector）与 MeterProvider（Prometheus 拉取模式）。
+// Meter 返回指定 instrumentation scope 的 Meter，供业务自定义指标使用。
+// 与 Tracer 同理：OTel 未启用时全局 MeterProvider 是 noop 实现，调用方无需分支。
+func Meter(scope string) metric.Meter {
+	return otel.Meter(scope)
+}
+
+// Init 初始化 TracerProvider 与 MeterProvider，两者都经 OTLP gRPC 推送到 otel-collector。
 //
 // 返回的 shutdown 必须在进程退出前调用：BatchSpanProcessor 有内存缓冲，
 // 不 flush 会丢掉最后一批 span（尤其是刚发生错误的那条链路）。
@@ -114,9 +127,12 @@ func Init(ctx context.Context, cfg *config.Config) (func(context.Context) error,
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))),
 	)
 
-	// Metric 只注册 Prometheus exporter，不做 OTLP metric push：
-	// 推模式与 Prometheus 的拉模式重复，且 collector 侧还要额外维护 metrics pipeline。
-	metricExporter, err := otelprom.New()
+	// Metric 改用 OTLP 推送到 collector，不再在业务进程内暴露 /metrics：
+	// Prometheus 只需抓 collector 一个目标，副本扩缩容不会改变抓取目标数。
+	metricExporter, err := otlpmetricgrpc.New(ctx,
+		otlpmetricgrpc.WithEndpoint(endpoint),
+		otlpmetricgrpc.WithInsecure(),
+	)
 	if err != nil {
 		// TracerProvider 已创建但未注册为全局，关闭底层 exporter 即可
 		_ = tp.Shutdown(ctx)
@@ -124,7 +140,10 @@ func Init(ctx context.Context, cfg *config.Config) (func(context.Context) error,
 	}
 	mp := sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(res),
-		sdkmetric.WithReader(metricExporter),
+		// 10s 导出一次：短于 Prometheus 的 15s 抓取间隔，保证每次抓到的都是新值
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter,
+			sdkmetric.WithInterval(10*time.Second)),
+		),
 	)
 
 	otel.SetTracerProvider(tp)

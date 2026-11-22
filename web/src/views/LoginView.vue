@@ -32,7 +32,7 @@ async function handleSubmit() {
   try {
     if (mode.value === 'login') {
       const res: any = await login(username.value, password.value, captchaId.value, captchaInput.value)
-      userStore.setToken(res.access_token, res.access_token_expire)
+      userStore.setToken(res.access_token)
       userStore.setUserInfo(res.account)
       redirectAfterAuth()
     } else {

@@ -3,6 +3,7 @@ package user
 import (
 	"fake_tiktok/internal/dto/request"
 	"fake_tiktok/internal/model"
+	"fake_tiktok/pkg/apperr"
 	"fake_tiktok/pkg/auth"
 	"fake_tiktok/pkg/httpx"
 
@@ -44,8 +45,9 @@ type BaseHandler struct {
 func (h *BaseHandler) Captcha(c *gin.Context) {
 	id, b64s, err := h.logic.BaseLogic.GenerateCaptcha()
 	if err != nil {
+		// 验证码存 Redis，写不进去是基础设施故障 → 500
 		h.logger.Error("generate captcha failed", zap.Error(err))
-		httpx.FailWithMsg(c, "generate captcha failed")
+		httpx.FailWithErr(c, apperr.Redis("生成验证码失败", err))
 		return
 	}
 	httpx.OkWithData(c, httpx.Captcha{
@@ -78,7 +80,7 @@ func (h *UserHandler) Register(c *gin.Context) {
 
 	u := model.Account{Username: req.Username, Password: req.Password}
 	if _, err := h.logic.UserLogic.Register(c.Request.Context(), u); err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithMsg(c, "register success")
@@ -87,8 +89,9 @@ func (h *UserHandler) Register(c *gin.Context) {
 func (h *UserHandler) handleTokenResult(c *gin.Context, user model.Account) {
 	result, err := h.logic.UserLogic.GenerateToken(user)
 	if err != nil {
+		// JWT 签发失败属服务端配置/内部缺陷，不能返回 200
 		h.logger.Error("Failed to generate token:", zap.Error(err))
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, apperr.Internal("生成登录凭证失败", err))
 		return
 	}
 	auth.SetRefreshToken(c, result.RefreshToken, result.RefreshExpiry)
@@ -121,7 +124,13 @@ func (h *UserHandler) Login(c *gin.Context) {
 	u := model.Account{Username: req.Username, Password: req.Password}
 	user, err := h.logic.UserLogic.Login(c.Request.Context(), u)
 	if err != nil {
+		// 密码错/账号不存在都返回同一句 "login failed"（防账号枚举），
+		// 只有 DB 故障才走 500 + 细分码
 		h.logger.Error("Failed to login:", zap.Error(err))
+		if apperr.IsSystem(err) {
+			httpx.FailWithErr(c, err)
+			return
+		}
 		httpx.FailWithMsg(c, "login failed")
 		return
 	}
@@ -137,8 +146,7 @@ func (h *UserHandler) UserHomePage(c *gin.Context) {
 	}
 	userHome, err := h.logic.UserLogic.UserHome(c.Request.Context(), auth.GetUserID(c, h.logic.Config), req.UserID, req.Page, req.PageSize)
 	if err != nil {
-		h.logger.Error("Failed to get card:", zap.Error(err))
-		httpx.FailWithMsg(c, "Failed to get card")
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithData(c, userHome)
@@ -152,7 +160,7 @@ func (h *UserHandler) Logout(c *gin.Context) {
 	if err := h.logic.UserLogic.Logout(userID, refreshToken); err != nil {
 		h.logger.Warn("Logout may not have taken effect",
 			zap.String("user_id", userID), zap.Error(err))
-		httpx.FailWithMsg(c, "logout may not have taken effect due to server error")
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithMsg(c, "Successful logout")
@@ -162,8 +170,7 @@ func (h *UserHandler) PersonalInfo(c *gin.Context) {
 	userID := auth.GetUserID(c, h.logic.Config)
 	user, err := h.logic.UserLogic.UserInfo(c.Request.Context(), userID)
 	if err != nil {
-		h.logger.Error("Failed to get user info:", zap.Error(err))
-		httpx.FailWithMsg(c, "Failed to get user info")
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithData(c, user)
@@ -179,8 +186,7 @@ func (h *UserHandler) UserChangeInfo(c *gin.Context) {
 	req.UserID = auth.GetUserID(c, h.logic.Config)
 	err = h.logic.UserLogic.UserChangeInfo(c.Request.Context(), req)
 	if err != nil {
-		h.logger.Error("Failed to change user info:", zap.Error(err))
-		httpx.FailWithMsg(c, "Failed to change user info")
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithMsg(c, "Successful change user info")
@@ -197,7 +203,7 @@ func (h *UserHandler) UploadAvatar(c *gin.Context) {
 	avatarURL, err := h.logic.UserLogic.UploadAvatar(c.Request.Context(), userID, file)
 	if err != nil {
 		h.logger.Error("Failed to upload avatar:", zap.Error(err))
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 
@@ -222,7 +228,7 @@ func (h *FollowHandler) ListFollowers(c *gin.Context) {
 
 	data, err := h.logic.FollowLogic.ListFollowers(c.Request.Context(), req)
 	if err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithData(c, data)
@@ -237,7 +243,7 @@ func (h *FollowHandler) ListFollowing(c *gin.Context) {
 
 	data, err := h.logic.FollowLogic.ListFollowing(c.Request.Context(), req)
 	if err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithData(c, data)
@@ -257,7 +263,7 @@ func (h *FollowHandler) FollowUser(c *gin.Context) {
 	}
 	if err := h.logic.FollowLogic.FollowUser(c.Request.Context(), followerID, req.TargetUserID); err != nil {
 		h.logger.Error("Failed to follow user:", zap.Error(err))
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithMsg(c, "关注成功")
@@ -277,7 +283,7 @@ func (h *FollowHandler) UnfollowUser(c *gin.Context) {
 	}
 	if err := h.logic.FollowLogic.UnfollowUser(c.Request.Context(), followerID, req.TargetUserID); err != nil {
 		h.logger.Error("Failed to unfollow user:", zap.Error(err))
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithMsg(c, "取关成功")
@@ -301,7 +307,7 @@ func (h *UserHomeHandler) ListUserVideos(c *gin.Context) {
 
 	data, err := h.logic.UserHomeLogic.ListUserVideos(c.Request.Context(), req)
 	if err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithData(c, data)

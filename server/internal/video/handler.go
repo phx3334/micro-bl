@@ -47,7 +47,11 @@ func (h *VideoHandler) ListPublishedVideos(c *gin.Context) {
 		return
 	}
 
-	list, total, nextCursor := h.logic.VideoLogic.ListHotVideos(req)
+	list, total, nextCursor, err := h.logic.VideoLogic.ListHotVideos(req)
+	if err != nil {
+		httpx.FailWithErr(c, err)
+		return
+	}
 
 	httpx.OkWithData(c, gin.H{
 		"list":        list,
@@ -67,7 +71,7 @@ func (h *VideoHandler) GetVideoDetail(c *gin.Context) {
 	userID := auth.GetUserID(c, h.logic.Config)
 	data, err := h.logic.VideoLogic.GetVideoDetail(c.Request.Context(), userID, req.VideoID)
 	if err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 
@@ -93,7 +97,7 @@ func (h *VideoHandler) DeleteVideo(c *gin.Context) {
 	}
 
 	if err := h.logic.VideoLogic.DeleteVideo(c.Request.Context(), userID, req.VideoID); err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 
@@ -140,7 +144,7 @@ func (h *VideoUploadHandler) Upload(c *gin.Context) {
 	defer uploadCancel()
 	videoID, err := h.logic.VideoUploadLogic.Upload(uploadCtx, userID, file, cover, req)
 	if err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 
@@ -167,7 +171,7 @@ func (h *VideoUploadHandler) GetTranscodeStatus(c *gin.Context) {
 
 	data, err := h.logic.VideoUploadLogic.GetTranscodeStatus(c.Request.Context(), userID, uint(videoID))
 	if err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 

@@ -1,6 +1,0 @@
-.git
-server/.env
-**/node_modules
-web/
-*.exe
-*.mp4

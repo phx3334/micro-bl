@@ -11,9 +11,12 @@ package main
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,8 +46,8 @@ func main() {
 
 	logger := log.InitZap(&cfg.Zap)
 
-	// worker 没有 HTTP 端口（因此不暴露 /metrics），但仍要初始化 OTel：
-	// MySQL / Redis / Kafka 的自动埋点与转码 span 都依赖全局 Provider 与 propagator。
+	// worker 只有 :9091 探针端口（无业务端口、不暴露 /metrics，指标走 OTLP 推送），
+	// 但仍要初始化 OTel：MySQL / Redis / Kafka 的自动埋点与转码 span 都依赖全局 Provider 与 propagator。
 	cfg.OTEL.ServiceName = "worker-svc"
 	otelShutdown, otelErr := otelx.Init(context.Background(), cfg)
 	if otelErr != nil {
@@ -110,7 +113,7 @@ func main() {
 		}(t)
 		go func(t consumeTarget) {
 			defer wg.Done()
-			t.agg.consumeLoop(ctx, cfg.Kafka.Brokers, t.topic, t.groupID)
+			t.agg.consumeLoop(ctx, &cfg.Kafka, t.topic, t.groupID)
 		}(t)
 	}
 
@@ -127,10 +130,35 @@ func main() {
 		defer wg.Done()
 		// 单次转码超时来自 APP_TRANSCODE_TIMEOUT（秒），0 时由 transcodeOne 兜底 30 分钟
 		transcodeTimeout := time.Duration(cfg.Transcode.Timeout) * time.Second
-		transcodeConsumeLoop(ctx, cfg.Kafka.Brokers, db, storageInstance, cfg.FFmpeg, transcodeTimeout, logger)
+		transcodeConsumeLoop(ctx, &cfg.Kafka, db, storageInstance, cfg.FFmpeg, transcodeTimeout, logger)
 	}()
 
 	logger.Info("Worker 已启动，正在消费播放量/点赞数/评论数增量与转码任务...")
+
+	// 心跳只供 liveness 探针使用：它证明进程调度与 HTTP 栈还活着，
+	// 不代表 Kafka 消费在推进——消费停滞由 KafkaConsumerLagHigh/Growing 告警负责。
+	// 不再额外导出同名指标：反复重启由 kube-prometheus-stack 的 KubePodCrashLooping 覆盖。
+	var lastBeat atomic.Int64
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			lastBeat.Store(time.Now().Unix())
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
+	healthSrv := newHealthServer(db, &lastBeat)
+	go func() {
+		logger.Info("worker health endpoint listening", zap.String("addr", healthSrv.Addr))
+		if err := healthSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("worker health server exited", zap.Error(err))
+		}
+	}()
 
 	// 7. 阻塞等待信号
 	<-ctx.Done()
@@ -161,6 +189,13 @@ func main() {
 		logger.Info("all goroutines exited")
 	case <-time.After(10 * time.Second):
 		logger.Warn("worker goroutines exit timeout (10s), forcing shutdown")
+	}
+
+	// 健康端口最后关：排在消费协程退出之后，避免停机过程中探针还在报 Ready
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := healthSrv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("worker health server shutdown error", zap.Error(err))
 	}
 
 	// 10. 释放资源

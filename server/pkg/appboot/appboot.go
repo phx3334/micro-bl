@@ -11,6 +11,7 @@ package appboot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -112,7 +113,11 @@ func Run(opts Options) {
 	redisClient := redisx.NewRedisClient(redisConn.Client, redisConn.KeyPrefix)
 
 	// Producer 是懒连接的，构造本身不产生网络请求；不需要发消息的服务也不会真正建连
-	producer := kafkax.NewProducer(&cfg.Kafka, logger)
+	producer, err := kafkax.NewProducer(&cfg.Kafka, logger)
+	if err != nil {
+		logger.Error("Kafka TLS 配置失败", zap.Error(err))
+		os.Exit(1)
+	}
 
 	var storageInstance storagex.Storage
 	if opts.NeedsStorage {
@@ -180,12 +185,17 @@ func Run(opts Options) {
 	logger.Info(opts.ServiceName+" started",
 		zap.String("http", httpSrv.Addr), zap.String("grpc", grpcAddr(grpcLis)))
 
+	var exitCode int
 	select {
 	case <-ctx.Done():
 		logger.Info("shutdown signal received")
 	case serveErr := <-errCh:
-		if serveErr != nil {
-			logger.Error("server exited", zap.Error(serveErr))
+		// ListenAndServe / Serve 在正常关闭时返回 http.ErrServerClosed；
+		// 其它错误（端口被占、监听失败）必须非 0 退出，否则 K8s 会把
+		// "启动失败"当成"正常结束"（Completed），故障被静默掩盖。
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			logger.Error("server exited unexpectedly", zap.Error(serveErr))
+			exitCode = 1
 		}
 	}
 
@@ -229,6 +239,9 @@ func Run(opts Options) {
 		_ = sqlDB.Close()
 	}
 	logger.Info(opts.ServiceName + " shutdown complete")
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
 }
 
 // applyDefaults 在对应环境变量未显式设置时套用本服务的默认库名与端口。
@@ -249,30 +262,36 @@ func applyDefaults(cfg *config.Config, opts Options) {
 func newEngine(cfg *config.Config, logger *zap.Logger, db *gorm.DB, redisConn *redisx.RedisConn) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
-	// otelx 中间件放在日志中间件之前：日志能拿到请求 ctx 中的 trace_id
-	engine.Use(otelx.GinMiddleware(), httpx.GinLogger(logger), httpx.GinRecovery(logger))
+	// Recovery 放最前：兜住下方所有中间件与 handler 的 panic（官方习惯位）；
+	// otelx 仍必须在日志中间件之前：日志能拿到请求 ctx 中的 trace_id
+	engine.Use(httpx.GinRecovery(logger), otelx.GinMiddleware(), httpx.GinLogger(logger))
 
-	// 健康检查：探 MySQL 与 Redis，任一不可用返回 503，可直接作为 K8s 探针
+	// 存活探针：纯进程检查、零 IO——HTTP 还能响应就返回 200。
+	// 不查依赖：MySQL/Redis 故障是"重启解决不了的病"，交给 /ready 摘流量即可，
+	// 否则依赖宕机会让全体 Pod liveness 失败，触发无意义的重启风暴。
 	engine.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "alive"})
+	})
+	// 就绪探针：探 MySQL 与 Redis（统一 2s 超时，防网络黑洞让 /ready 挂死）；
+	// 任一不可用返回 503，K8s 据此从 Service 摘除流量
+	engine.GET("/ready", func(c *gin.Context) {
 		sqlDB, dbErr := db.DB()
 		if dbErr != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy", "mysql": dbErr.Error()})
-			return
-		}
-		if pingErr := sqlDB.Ping(); pingErr != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy", "mysql": pingErr.Error()})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unready", "mysql": dbErr.Error()})
 			return
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
-		if pingErr := redisConn.Client.Ping(ctx).Err(); pingErr != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy", "redis": pingErr.Error()})
+		if pingErr := sqlDB.PingContext(ctx); pingErr != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unready", "mysql": pingErr.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "healthy"})
+		if pingErr := redisConn.Client.Ping(ctx).Err(); pingErr != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unready", "redis": pingErr.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
-	// Prometheus 抓取端点，与 /health 同级（不挂业务路由前缀）
-	engine.GET("/metrics", otelx.MetricsHandler())
 
 	return engine
 }

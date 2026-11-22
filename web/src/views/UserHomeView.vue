@@ -55,6 +55,8 @@ async function loadVideos(page: number = 1) {
     videos.value = res.list || []
     videoTotal.value = res.total || 0
     videoPage.value = page
+  } catch {
+    // 错误提示由请求拦截器统一处理；补 catch 避免未处理的 Promise 拒绝
   } finally {
     videoLoading.value = false
   }
@@ -91,6 +93,8 @@ async function toggleFollow() {
       await followUser(userId.value)
       isFollowed.value = true
     }
+  } catch {
+    // 错误提示由请求拦截器统一处理，状态保持原样
   } finally {
     followLoading.value = false
   }

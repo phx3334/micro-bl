@@ -23,15 +23,20 @@ request.interceptors.request.use(
   (error) => Promise.reject(error)
 )
 
+// 后端 JWT 中间件在 access token 过期时会通过 refresh token 续签，
+// 并在响应头返回 new-access-token / new-access-expiry。
+// 注意：续签发生在业务 handler 之前，因此 500/4xx 等失败响应同样可能携带该头，必须统一处理。
+function applyNewAccessToken(headers: Record<string, any> | undefined) {
+  const newToken = headers?.['new-access-token']
+  if (newToken) {
+    localStorage.setItem(TOKEN_KEY, newToken)
+  }
+}
+
 // 响应拦截器：统一处理业务错误 + 自动刷新 token
 request.interceptors.response.use(
   (response: AxiosResponse<ApiResponse>) => {
-    // 后端 JWT 中间件在 access token 过期时会通过 refresh token 续签，
-    // 并在响应头返回 new-access-token / new-access-expiry
-    const newToken = response.headers['new-access-token']
-    if (newToken) {
-      localStorage.setItem(TOKEN_KEY, newToken)
-    }
+    applyNewAccessToken(response.headers as Record<string, any>)
 
     const res = response.data
     // code 3 = 成功
@@ -56,6 +61,10 @@ request.interceptors.response.use(
     return Promise.reject(new Error(res.msg || '请求失败'))
   },
   (error) => {
+    // 失败响应（含 HTTP 500 系统错误）同样可能带 new-access-token，不能只在 200 分支消费
+    if (error.response) {
+      applyNewAccessToken(error.response.headers)
+    }
     if (error.response?.status === 401) {
       // 兜底：部分网关/代理可能返回 401
       localStorage.removeItem(TOKEN_KEY)
@@ -64,7 +73,30 @@ request.interceptors.response.use(
       window.location.href = `/login?redirect=${encodeURIComponent(redirect)}`
       return Promise.reject(new Error('登录已过期，请重新登录'))
     }
-    const msg = error.response?.data?.msg || error.message || '网络异常'
+    // 兼容 500 响应体的两种形态：
+    //   1) 服务端 JSON：{"code":"DB_CONNECT_FAIL","msg":...}
+    //   2) 网关/nginx 透传的纯字符串错误码或非 JSON 文本
+    const raw = error.response?.data
+    let body: any = null
+    if (raw && typeof raw === 'object') {
+      body = raw
+    } else if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+      try {
+        body = JSON.parse(raw)
+      } catch {
+        body = null
+      }
+    }
+    // 纯文本错误码（非 HTML）兜底给用户提示
+    const plainText =
+      typeof raw === 'string' && raw.trim() && !raw.trim().startsWith('<') ? raw.trim() : ''
+    const code = typeof body?.code === 'string' ? body.code : plainText || undefined
+    const msg = body?.msg || plainText || error.message || '网络异常'
+    // 系统错误的 code 是字符串细分码（DB_CONNECT_FAIL / PANIC 等），只进控制台供排障，
+    // 用户侧仍只提示 msg
+    if (typeof code === 'string') {
+      console.error(`[API Error] ${code}: ${msg}`)
+    }
     showToast(msg)
     return Promise.reject(new Error(msg))
   }

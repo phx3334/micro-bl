@@ -1,0 +1,7 @@
+# 上下文 = server/（Dockerfile 在本目录，见 build-app.yaml 的 context: server）
+# 原根目录 .dockerignore 的 web/ 等排除项不再需要：上下文天然看不到其他目录。
+.env
+**/node_modules
+*.exe
+*.mp4
+logs/

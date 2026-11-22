@@ -7,6 +7,7 @@ import (
 	"fake_tiktok/internal/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // InteractionStatus 用户对某视频的互动状态。
@@ -54,8 +55,12 @@ func (r *InteractionRepo) CreateVideoLike(ctx context.Context, userID string, vi
 		UserID:  userID,
 		VideoID: uint64(videoID),
 	}
-	result := r.db.WithContext(ctx).Where("user_id = ? AND video_id = ?", userID, videoID).
-		FirstOrCreate(&like)
+	// INSERT ... ON DUPLICATE KEY DO NOTHING：把并发竞态交给唯一索引裁决。
+	// FirstOrCreate 是"先查后插"，两个并发请求都查不到时会同时插入，
+	// 输的一方拿到唯一键冲突错误（用户看到"点赞失败"），幂等语义被破坏。
+	result := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(&like)
 	if result.Error != nil {
 		return false, result.Error
 	}

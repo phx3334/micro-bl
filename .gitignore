@@ -3,6 +3,9 @@
 .env.local
 server/.env
 
+# 独立 infra 仓库（已拆分为 github.com/phx3334/micro-bl--manifest，不入本仓库）
+/project-infra/
+
 # 前端/后端构建产物
 web/dist
 node_modules/
@@ -12,3 +15,10 @@ dist/
 # 系统 / IDE
 .DS_Store
 *.log
+
+# 非业务源码
+.screenshots/
+.vscode/
+**/.vscode/
+.trae/
+docs/

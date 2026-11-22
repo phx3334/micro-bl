@@ -2,10 +2,9 @@ package user
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
 	"fake_tiktok/internal/dto/request"
+	"fake_tiktok/pkg/apperr"
 	"fake_tiktok/pkg/httpx"
 
 	"go.uber.org/zap"
@@ -31,7 +30,7 @@ func (l *FollowLogic) ListFollowers(ctx context.Context, req request.ListFollowe
 
 	followerIDs, total, err := l.deps.FollowRepo.ListFollowers(ctx, req.UserID, req.Page, req.PageSize)
 	if err != nil {
-		return nil, fmt.Errorf("查询粉丝列表失败")
+		return nil, apperr.DB("查询粉丝列表失败", err)
 	}
 
 	return l.buildFollowListResp(ctx, followerIDs, total, req.Page, req.PageSize)
@@ -48,7 +47,7 @@ func (l *FollowLogic) ListFollowing(ctx context.Context, req request.ListFollowi
 
 	followeeIDs, total, err := l.deps.FollowRepo.ListFollowing(ctx, req.UserID, req.Page, req.PageSize)
 	if err != nil {
-		return nil, fmt.Errorf("查询关注列表失败")
+		return nil, apperr.DB("查询关注列表失败", err)
 	}
 
 	return l.buildFollowListResp(ctx, followeeIDs, total, req.Page, req.PageSize)
@@ -116,12 +115,12 @@ func (l *FollowLogic) buildFollowListResp(ctx context.Context, userIDs []string,
 // 因此方法随仓储一起迁到这里，路由也从 /interaction/follow 挪到 /user/follow。
 func (l *FollowLogic) FollowUser(ctx context.Context, followerID, followeeID string) error {
 	if followerID == followeeID {
-		return errors.New("不能关注自己")
+		return apperr.Business("不能关注自己")
 	}
 
 	created, err := l.deps.FollowRepo.CreateFollow(ctx, followerID, followeeID)
 	if err != nil {
-		return fmt.Errorf("关注失败，请稍后重试")
+		return apperr.DB("关注失败，请稍后重试", err)
 	}
 
 	// 仅在真正新建关注时维护计数。
@@ -143,11 +142,16 @@ func (l *FollowLogic) FollowUser(ctx context.Context, followerID, followeeID str
 // UnfollowUser 取关用户
 func (l *FollowLogic) UnfollowUser(ctx context.Context, followerID, followeeID string) error {
 	if followerID == followeeID {
-		return errors.New("不能取关自己")
+		return apperr.Business("不能取关自己")
 	}
 
-	if _, err := l.deps.FollowRepo.DeleteFollow(ctx, followerID, followeeID); err != nil {
-		return fmt.Errorf("取关失败，请稍后重试")
+	deleted, err := l.deps.FollowRepo.DeleteFollow(ctx, followerID, followeeID)
+	if err != nil {
+		return apperr.DB("取关失败，请稍后重试", err)
+	}
+	// deleted=false：原本就未关注（幂等），不能再回退计数，否则 fans/following 缓存被虚减成负数
+	if !deleted {
+		return nil
 	}
 
 	// 取关后同步回退缓存计数（被关注者粉丝 -1，关注者关注数 -1，best-effort）

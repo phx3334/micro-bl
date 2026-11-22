@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
@@ -13,6 +14,7 @@ import (
 	"fake_tiktok/internal/dto/cache"
 	"fake_tiktok/internal/dto/request"
 	"fake_tiktok/internal/model"
+	"fake_tiktok/pkg/apperr"
 	"fake_tiktok/pkg/httpx"
 	"fake_tiktok/pkg/util"
 
@@ -35,7 +37,15 @@ type VideoLogic struct {
 
 // zoneCache 单个分区（或全局）的热门视频缓存 + 互斥锁
 type zoneCache struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// state 用原子指针承载 (result, expireAt)：快速路径不加锁读取，
+	// 与锁内回填构成"单写多读"的原子发布，避免无同步并发读写字段的 data race。
+	// 两字段必须打包在一起，分开原子化会出现 result 与 expireAt 跨版本拼对的撕裂读。
+	state atomic.Pointer[zoneCacheState]
+}
+
+// zoneCacheState 缓存快照：写入后不可变，回填时整体替换。
+type zoneCacheState struct {
 	result   *hotVideosCache
 	expireAt time.Time
 }
@@ -56,17 +66,17 @@ func (v *VideoLogic) DeleteVideo(ctx context.Context, userID string, videoID uin
 	video, err := v.deps.VideoRepo.FindVideoByID(ctx, videoID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("视频不存在")
+			return apperr.Business("视频不存在")
 		}
-		return fmt.Errorf("查询失败: %w", err)
+		return apperr.DB("查询视频失败", err)
 	}
 	if video.AuthorID != userID {
-		return errors.New("无权限删除")
+		return apperr.Business("无权限删除")
 	}
 
 	// 3. 软删除
 	if err := v.deps.VideoRepo.DeleteVideo(ctx, videoID); err != nil {
-		return fmt.Errorf("删除失败: %w", err)
+		return apperr.DB("删除视频失败", err)
 	}
 
 	// 4. 尽力清理关联资源
@@ -149,8 +159,11 @@ func (v *VideoLogic) getZoneCache(zone, cursor string, limit int) *zoneCache {
 	return val.(*zoneCache)
 }
 
-// ListHotVideos 获取已发布视频列表（Redis 优先，降级 MySQL）
-func (v *VideoLogic) ListHotVideos(req request.HomeVideoList) ([]httpx.HomeVideoInfo, int64, string) {
+// ListHotVideos 获取已发布视频列表（Redis 优先，降级 MySQL）。
+//
+// 返回 error：Redis 与 MySQL 两条路都走不通时必须报系统错误，
+// 否则首页会静默返回空列表（200），故障期间监控与用户都看不出异常。
+func (v *VideoLogic) ListHotVideos(req request.HomeVideoList) ([]httpx.HomeVideoInfo, int64, string, error) {
 	// 使用带超时的 context，防止 Redis/MySQL 慢查询导致 goroutine 长期阻塞
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -162,9 +175,9 @@ func (v *VideoLogic) ListHotVideos(req request.HomeVideoList) ([]httpx.HomeVideo
 	zc := v.getZoneCache(req.Zone, req.Cursor, limit)
 
 	// 第一次检查（无锁快速路径）：缓存有效时直接返回，避免锁开销
-	if zc.result != nil && time.Now().Before(zc.expireAt) {
+	if s := zc.state.Load(); s != nil && time.Now().Before(s.expireAt) {
 		v.cleanupExpiredZoneCaches()
-		return v.signHomeList(ctx, zc.result.list), zc.result.total, zc.result.nextCursor
+		return v.signHomeList(ctx, s.result.list), s.result.total, s.result.nextCursor, nil
 	}
 
 	// 缓存未命中：加锁防止同一分页的并发请求同时穿透到 Redis/MySQL
@@ -172,21 +185,27 @@ func (v *VideoLogic) ListHotVideos(req request.HomeVideoList) ([]httpx.HomeVideo
 	defer zc.mu.Unlock()
 
 	// 第二次检查（持锁后）：可能其他 goroutine 已经在锁内回填了缓存
-	if zc.result != nil && time.Now().Before(zc.expireAt) {
-		return v.signHomeList(ctx, zc.result.list), zc.result.total, zc.result.nextCursor
+	if s := zc.state.Load(); s != nil && time.Now().Before(s.expireAt) {
+		return v.signHomeList(ctx, s.result.list), s.result.total, s.result.nextCursor, nil
 	}
 
-	list, total, cursor := v.redisPath(ctx, req)
+	list, total, cursor, err := v.redisPath(ctx, req)
+	if err != nil {
+		// 双路失败：不回填缓存、不返回空列表，交由 handler 按系统错误响应
+		return nil, 0, "", err
+	}
 
 	// 缓存结果 5 秒（缓存内保留对象 key，签名在响应阶段完成）
-	zc.result = &hotVideosCache{list: list, total: total, nextCursor: cursor}
-	zc.expireAt = time.Now().Add(5 * time.Second)
+	zc.state.Store(&zoneCacheState{
+		result:   &hotVideosCache{list: list, total: total, nextCursor: cursor},
+		expireAt: time.Now().Add(5 * time.Second),
+	})
 
-	return v.signHomeList(ctx, list), total, cursor
+	return v.signHomeList(ctx, list), total, cursor, nil
 }
 
 // redisPath Redis 缓存路径：ZSet 游标分页 → 批量查缓存 → 回填缺失
-func (v *VideoLogic) redisPath(ctx context.Context, req request.HomeVideoList) ([]httpx.HomeVideoInfo, int64, string) {
+func (v *VideoLogic) redisPath(ctx context.Context, req request.HomeVideoList) ([]httpx.HomeVideoInfo, int64, string, error) {
 	limit := int64(req.Limit)
 	if limit <= 0 || limit > 30 {
 		limit = 10
@@ -213,9 +232,10 @@ func (v *VideoLogic) redisPath(ctx context.Context, req request.HomeVideoList) (
 		}
 		list, total, cursor, fallbackErr := v.mysqlFallback(ctx, req)
 		if fallbackErr != nil {
-			return nil, 0, ""
+			// Redis 挂了 + MySQL 也挂了 = 双路失败，必须上报系统错误
+			return nil, 0, "", apperr.DB("查询视频列表失败", fallbackErr)
 		}
-		return list, total, cursor
+		return list, total, cursor, nil
 	}
 
 	// ZCard 查询总数，失败时 total 默认 0（非关键数据，不影响分页）
@@ -240,7 +260,8 @@ func (v *VideoLogic) redisPath(ctx context.Context, req request.HomeVideoList) (
 	}
 
 	if len(videoIDs) == 0 {
-		return nil, 0, ""
+		// ZSet 有数据但成员都不可解析，属数据异常；当作空页返回（不是基础设施故障）
+		return nil, 0, "", nil
 	}
 
 	// 批量查 Redis 缓存；Redis 失败时将所有请求的 videoIDs 视为未命中，强制走 MySQL 回源
@@ -255,6 +276,12 @@ func (v *VideoLogic) redisPath(ctx context.Context, req request.HomeVideoList) (
 		dbVideos, queryErr := v.deps.VideoRepo.FindPublishedVideosByIDs(ctx, missedIDs)
 		if queryErr != nil {
 			v.deps.Logger.Error("MySQL 回源查询失败，跳过缓存回填", zap.Error(queryErr))
+			// 缓存一条都没命中时，回源是拿数据的唯一途径，失败即无数据可返回：
+			// 此时返回空列表会被前端当成"没有视频"，必须报系统错误。
+			// 缓存部分命中则降级返回已有内容，保持首页可用。
+			if len(cacheMap) == 0 {
+				return nil, 0, "", apperr.DB("查询视频列表失败", queryErr)
+			}
 		} else {
 			v.deps.BackfillRepo.BackfillVideoCache(ctx, dbVideos, missedIDs, cacheMap)
 		}
@@ -292,7 +319,7 @@ func (v *VideoLogic) redisPath(ctx context.Context, req request.HomeVideoList) (
 			nextCursorID = uint(parsed)
 		}
 	}
-	return list, total, util.EncodeCursor(nextScore, nextCursorID)
+	return list, total, util.EncodeCursor(nextScore, nextCursorID), nil
 }
 
 // mysqlFallback MySQL 降级路径：直接查数据库，不走缓存
@@ -356,9 +383,12 @@ func (v *VideoLogic) mysqlFallback(ctx context.Context, req request.HomeVideoLis
 // GetVideoDetail 获取视频详情（Redis 缓存优先，未命中降级 MySQL 并回填）
 func (v *VideoLogic) GetVideoDetail(ctx context.Context, userID string, videoID uint) (*httpx.VideoDetailResp, error) {
 	// ---- 1. 获取视频基本信息（缓存优先） ----
-	videoData := v.getVideoDataWithFallback(ctx, videoID)
+	videoData, err := v.getVideoDataWithFallback(ctx, videoID)
+	if err != nil {
+		return nil, err
+	}
 	if videoData == nil {
-		return nil, fmt.Errorf("video not found")
+		return nil, apperr.Business("视频不存在")
 	}
 
 	// ---- 2. 获取作者信息（跨服务 gRPC，原实现读 accounts + 用户缓存） ----
@@ -410,19 +440,27 @@ func (v *VideoLogic) GetVideoDetail(ctx context.Context, userID string, videoID 
 	}, nil
 }
 
-// getVideoDataWithFallback 获取视频缓存数据，未命中则降级查 MySQL 并回填
-func (v *VideoLogic) getVideoDataWithFallback(ctx context.Context, videoID uint) *cache.VideoCacheData {
+// getVideoDataWithFallback 获取视频缓存数据，未命中则降级查 MySQL 并回填。
+//
+// 返回 error 而不是只返回 nil：nil + nil 表示"视频不存在"（业务错误），
+// nil + error 表示回源查询失败（系统错误）。混成一个 nil 会把 DB 故障伪装成
+// "视频不存在"，既骗过前端也骗过 5xx 错误率。
+func (v *VideoLogic) getVideoDataWithFallback(ctx context.Context, videoID uint) (*cache.VideoCacheData, error) {
 	// 第一次：无锁查缓存（快速路径）
 	cacheMap, _, redisErr := v.deps.VideoCacheRepo.GetVideoCache(ctx, []uint{videoID})
 	if redisErr != nil {
 		v.deps.Logger.Warn("Redis get video cache failed", zap.Uint("video_id", videoID), zap.Error(redisErr))
 	}
 	if data, ok := cacheMap[videoID]; ok && !data.IsEmpty {
-		return data
+		return data, nil
 	}
 
 	// 缓存未命中：使用 singleflight 防击穿
 	sfResult, sfErr, _ := v.sfGroup.Do(fmt.Sprintf("video:%d", videoID), func() (interface{}, error) {
+		// 回源结果会被所有等待者共享，绝不能绑定首个调用者的请求 ctx：
+		// 否则它超时/断连会把 context canceled 传染给其余并发请求（误报 500）。
+		// 各仓储/客户端内部自带超时，去掉 deadline 不会失去兜底。
+		ctx := context.WithoutCancel(ctx)
 		// singleflight 回调内再次查缓存（双重检查），可能其他 goroutine 已回填
 		innerCacheMap, innerMissedIDs, innerErr := v.deps.VideoCacheRepo.GetVideoCache(ctx, []uint{videoID})
 		if innerErr != nil || innerCacheMap == nil {
@@ -449,12 +487,12 @@ func (v *VideoLogic) getVideoDataWithFallback(ctx context.Context, videoID uint)
 	if sfErr != nil {
 		v.deps.Logger.Warn("getVideoDataWithFallback failed",
 			zap.Uint("video_id", videoID), zap.Error(sfErr))
-		return nil
+		return nil, apperr.DB("查询视频失败", sfErr)
 	}
 	if sfResult != nil {
-		return sfResult.(*cache.VideoCacheData)
+		return sfResult.(*cache.VideoCacheData), nil
 	}
-	return nil
+	return nil, nil
 }
 
 // getInteraction 获取当前用户对视频的互动状态：
@@ -502,8 +540,9 @@ func (v *VideoLogic) cleanupExpiredZoneCaches() {
 		if !ok {
 			return true
 		}
-		// 条目已过期且无人持有锁：安全删除
-		if zc.result != nil && now.After(zc.expireAt) {
+		// 只读原子 state 判断是否过期；即使与持锁回填并发，
+		// 被删除条目上的 Store 也只是丢一次回填（下次请求重建），无副作用
+		if s := zc.state.Load(); s != nil && now.After(s.expireAt) {
 			v.zoneCaches.Delete(key)
 		}
 		return true

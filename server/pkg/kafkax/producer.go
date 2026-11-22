@@ -8,6 +8,7 @@ package kafkax
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"sync"
@@ -29,6 +30,7 @@ var ErrProducerClosed = errors.New("kafka producer closed")
 type Producer struct {
 	brokers []string
 	logger  *zap.Logger
+	tls     *tls.Config
 
 	// mu 保护 writer 的懒初始化与 Close，避免并发首次发送重复创建 Writer
 	mu     sync.RWMutex
@@ -37,11 +39,17 @@ type Producer struct {
 }
 
 // NewProducer 构造 Producer，但不会立刻连接 Kafka——首次 Publish 才创建 Writer。
-func NewProducer(cfg *config.KafkaConfig, logger *zap.Logger) *Producer {
+// TLS 配置在这里解析：文件缺失属于部署错误，直接让进程启动失败比运行期才报错更好定位。
+func NewProducer(cfg *config.KafkaConfig, logger *zap.Logger) (*Producer, error) {
+	tlsCfg, err := tlsConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 	return &Producer{
 		brokers: cfg.Brokers,
 		logger:  logger,
-	}
+		tls:     tlsCfg,
+	}, nil
 }
 
 // Publish 发送一条消息。key 同时作为 partition key：
@@ -90,7 +98,7 @@ func (p *Producer) writerForWrite() (*kafka.Writer, func(), error) {
 		return nil, nil, ErrProducerClosed
 	}
 	if p.writer == nil {
-		p.writer = &kafka.Writer{
+		w := &kafka.Writer{
 			Addr:     kafka.TCP(p.brokers...),
 			Balancer: &kafka.Hash{},
 			// 等待所有 ISR 确认，弱一致的计数数据也尽量不丢
@@ -99,6 +107,11 @@ func (p *Producer) writerForWrite() (*kafka.Writer, func(), error) {
 			// 首次写入未知 topic 时由 broker 自动创建，避免必须先手工建 topic
 			AllowAutoTopicCreation: true,
 		}
+		// 单向 TLS：只验 broker 证书；nil 时用 kafka-go 默认的明文 Transport
+		if p.tls != nil {
+			w.Transport = &kafka.Transport{TLS: p.tls}
+		}
+		p.writer = w
 		p.logger.Info("kafka producer initialized", zap.Strings("brokers", p.brokers))
 	}
 	w := p.writer

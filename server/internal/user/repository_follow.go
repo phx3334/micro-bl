@@ -6,6 +6,7 @@ import (
 	"fake_tiktok/internal/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // FollowRepo 关注关系仓储。
@@ -85,9 +86,12 @@ func (r *FollowRepo) CreateFollow(ctx context.Context, followerID, followeeID st
 		FollowerID: followerID,
 		FolloweeID: followeeID,
 	}
+	// INSERT ... ON DUPLICATE KEY DO NOTHING：并发重复关注时由唯一索引裁决，
+	// 冲突方 RowsAffected=0，与"已关注"幂等语义一致；FirstOrCreate 的"先查后插"
+	// 会让并发请求撞唯一键直接报错。
 	result := r.db.WithContext(ctx).
-		Where("follower_id = ? AND followee_id = ?", followerID, followeeID).
-		FirstOrCreate(&follow)
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(&follow)
 	if result.Error != nil {
 		return false, result.Error
 	}

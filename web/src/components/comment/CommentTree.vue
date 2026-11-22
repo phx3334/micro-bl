@@ -76,6 +76,8 @@ async function submitComment() {
     await createComment(props.commentType, props.videoId, content, 0)
     inputContent.value = ''
     await loadComments(1)
+  } catch {
+    // 错误提示由请求拦截器统一处理；补 catch 避免未处理的 Promise 拒绝
   } finally {
     submitting.value = false
   }

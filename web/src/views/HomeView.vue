@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { getHomeVideoList } from '@/api/video'
 import type { HomeVideoInfo } from '@/types'
 import VideoCard from '@/components/common/VideoCard.vue'
@@ -9,7 +9,6 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import { RefreshCw as Refresh } from 'lucide-vue-next'
 
 const route = useRoute()
-const router = useRouter()
 
 // 当前选中的分区（空字符串=推荐，即用户进入首页默认看到的推荐内容）
 const activeZone = computed(() => (route.query.zone as string) || '')
@@ -36,35 +35,45 @@ async function loadCarousel() {
   }
 }
 
+// 请求序号：分区切换 / 刷新会与在途的加载更多请求并发，
+// 用序号丢弃过期响应，避免旧分区数据污染新列表、cursor 被写回旧值
+let loadSeq = 0
+
 async function loadFirst() {
+  const seq = ++loadSeq
   cursor.value = ''
   videos.value = []
   loading.value = true
   try {
     const res = await getHomeVideoList('', 30, activeZone.value)
+    if (seq !== loadSeq) return
     videos.value = res.list || []
     cursor.value = res.next_cursor
     hasMore.value = res.has_more
   } catch {
-    videos.value = []
-    hasMore.value = false
+    if (seq === loadSeq) {
+      videos.value = []
+      hasMore.value = false
+    }
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
 async function loadMore() {
   if (loading.value || !hasMore.value) return
+  const seq = loadSeq
   loading.value = true
   try {
     const res = await getHomeVideoList(cursor.value, 30, activeZone.value)
+    if (seq !== loadSeq) return
     videos.value.push(...(res.list || []))
     cursor.value = res.next_cursor
     hasMore.value = res.has_more
   } catch {
-    hasMore.value = false
+    if (seq === loadSeq) hasMore.value = false
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -98,11 +107,6 @@ onBeforeUnmount(() => {
 watch(activeZone, () => {
   loadFirst()
 })
-
-function formatCount(n: number): string {
-  if (n >= 10000) return (n / 10000).toFixed(1) + '万'
-  return String(n)
-}
 </script>
 
 <template>

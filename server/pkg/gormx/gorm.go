@@ -6,26 +6,56 @@ package gormx
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 	"time"
 
+	mysqldrv "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
-	"gorm.io/driver/mysql"
+	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/plugin/opentelemetry/tracing"
 
 	"fake_tiktok/pkg/config"
+	"fake_tiktok/pkg/tlsx"
 )
 
 func InitGorm(cfg *config.Config) *gorm.DB {
 	dbCfg := cfg.Database
-	// 修复：使用 url.QueryEscape 转义用户名和密码中的特殊字符（如 @、:、/ 等），
-	// 防止密码包含特殊字符时 DSN 解析错误导致连接失败
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		url.QueryEscape(dbCfg.User), url.QueryEscape(dbCfg.Password), dbCfg.Host, dbCfg.Port, dbCfg.DBName,
-	)
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	// 用官方 driver 的 Config.FormatDSN() 而不是 fmt.Sprintf + url.QueryEscape：
+	// MySQL DSN 不是 URL，driver 不做百分号解码。QueryEscape 会把密码里的
+	// @ / 空格 / % 改成 %40 / + / %25，等于拿"转义后的错误密码"去认证，
+	// 含特殊字符的密码必然登录失败。
+	dsnCfg := mysqldrv.NewConfig()
+	dsnCfg.User = dbCfg.User
+	dsnCfg.Passwd = dbCfg.Password
+	dsnCfg.Net = "tcp"
+	dsnCfg.Addr = fmt.Sprintf("%s:%d", dbCfg.Host, dbCfg.Port)
+	dsnCfg.DBName = dbCfg.DBName
+	dsnCfg.ParseTime = true
+	dsnCfg.Loc = time.Local
+	dsnCfg.Params = map[string]string{"charset": "utf8mb4"}
+
+	// 单向 TLS：只校验服务端证书，客户端不出示证书。
+	// go-sql-driver 要求先把 tls.Config 注册成一个名字，再在 DSN 里用 tls=<name> 引用。
+	if dbCfg.TLSEnabled {
+		serverName := dbCfg.TLSServerName
+		if serverName == "" {
+			serverName = tlsx.ServerName(dbCfg.Host)
+		}
+		tlsCfg, err := tlsx.ClientConfig(dbCfg.TLSCAFile, serverName)
+		if err != nil {
+			zap.L().Error("构造 MySQL TLS 配置失败", zap.Error(err))
+			os.Exit(1)
+		}
+		const tlsName = "fake-tiktok-internal"
+		if err := mysqldrv.RegisterTLSConfig(tlsName, tlsCfg); err != nil {
+			zap.L().Error("注册 MySQL TLS 配置失败", zap.Error(err))
+			os.Exit(1)
+		}
+		dsnCfg.TLSConfig = tlsName
+	}
+
+	db, err := gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), &gorm.Config{})
 	if err != nil {
 		zap.L().Error("连接数据库失败", zap.Error(err))
 		os.Exit(1)

@@ -15,6 +15,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,40 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
 	"fake_tiktok/pkg/config"
+	"fake_tiktok/pkg/tlsx"
 )
+
+// newClientOptions 构造 minio 客户端选项。
+//
+// UseSSL=true 时挂上「只验服务端」的 TLS 配置：客户端用内部根 CA 验链、
+// 校验 endpoint 主机名，但不出示客户端证书。
+func newClientOptions(cfg *config.MinioConfig, endpoint string) (*minio.Options, error) {
+	opts := &minio.Options{
+		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
+		Secure: cfg.UseSSL,
+	}
+	if !cfg.UseSSL {
+		return opts, nil
+	}
+	serverName := cfg.TLSServerName
+	if serverName == "" {
+		serverName = tlsx.ServerName(endpoint)
+	}
+	tlsCfg, err := tlsx.ClientConfig(cfg.TLSCAFile, serverName)
+	if err != nil {
+		return nil, err
+	}
+	opts.Transport = &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		TLSClientConfig:       tlsCfg,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	return opts, nil
+}
 
 // Storage 对象存储抽象接口。
 //
@@ -82,10 +116,11 @@ func NewStorage(cfg *config.MinioConfig) (Storage, error) {
 		expiry = 24 * time.Hour
 	}
 
-	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: cfg.UseSSL,
-	})
+	opts, err := newClientOptions(cfg, endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("storage: build tls config: %w", err)
+	}
+	client, err := minio.New(endpoint, opts)
 	if err != nil {
 		return nil, fmt.Errorf("storage: create minio client failed: %w", err)
 	}

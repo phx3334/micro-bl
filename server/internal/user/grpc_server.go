@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 
 	"fake_tiktok/api/pb"
 	"fake_tiktok/internal/model"
@@ -9,6 +10,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"gorm.io/gorm"
 )
 
 // UserGRPCServer user-svc 的 gRPC 服务实现。
@@ -28,7 +30,11 @@ func NewUserGRPCServer(accountRepo *AccountRepo, followRepo *FollowRepo, storage
 func (s *UserGRPCServer) GetUser(ctx context.Context, req *pb.GetUserReq) (*pb.UserInfo, error) {
 	account, err := s.accountRepo.FindByID(ctx, req.UserId)
 	if err != nil {
-		return nil, status.Error(codes.NotFound, "user not found")
+		// 真查不到才是 NotFound；DB 故障报 Internal，调用方才能区分"人不存在"与"user-svc 挂了"
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, status.Error(codes.NotFound, "user not found")
+		}
+		return nil, status.Error(codes.Internal, "query user failed")
 	}
 	return s.toUserInfo(ctx, account), nil
 }

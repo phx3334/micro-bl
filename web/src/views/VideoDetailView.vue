@@ -52,17 +52,22 @@ function requireLogin(): boolean {
   return true
 }
 
+// 详情请求序号：快速切换视频时丢弃上一个视频的过期响应，避免画面显示成旧视频
+let detailSeq = 0
+
 async function loadVideoDetail() {
+  const seq = ++detailSeq
   loading.value = true
   try {
     const res = await getVideoDetail(videoId.value)
+    if (seq !== detailSeq) return
     video.value = res
     isLiked.value = res.interaction.is_liked
     isFollowed.value = res.interaction.is_followed
   } catch {
-    video.value = null
+    if (seq === detailSeq) video.value = null
   } finally {
-    loading.value = false
+    if (seq === detailSeq) loading.value = false
   }
 }
 

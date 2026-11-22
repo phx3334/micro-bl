@@ -2,6 +2,7 @@ package video
 
 import (
 	"context"
+	"errors"
 
 	"fake_tiktok/api/pb"
 	"fake_tiktok/internal/model"
@@ -9,6 +10,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"gorm.io/gorm"
 )
 
 // VideoGRPCServer video-svc 的 gRPC 服务实现。
@@ -30,7 +32,12 @@ func (s *VideoGRPCServer) GetVideo(ctx context.Context, req *pb.GetVideoReq) (*p
 	// 跨服务只暴露已发布视频：转码中的视频不应该被点赞或评论
 	v, err := s.videoRepo.FindPublishedVideoByID(ctx, uint(req.VideoId))
 	if err != nil {
-		return nil, status.Error(codes.NotFound, "video not found")
+		// 只有真查不到才是 NotFound：DB 故障必须报 Internal，
+		// 否则调用方会把基础设施故障当"视频不存在"处理（业务错误 200）
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, status.Error(codes.NotFound, "video not found")
+		}
+		return nil, status.Error(codes.Internal, "query video failed")
 	}
 	return s.videoToBrief(ctx, v), nil
 }
@@ -96,7 +103,13 @@ func (s *VideoGRPCServer) GetUserStats(ctx context.Context, req *pb.GetUserStats
 func (s *VideoGRPCServer) IsVideoOwner(ctx context.Context, req *pb.IsVideoOwnerReq) (*pb.BoolResp, error) {
 	v, err := s.videoRepo.FindPublishedVideoByID(ctx, uint(req.VideoId))
 	if err != nil {
-		return &pb.BoolResp{Ok: false}, nil
+		// 视频确实不存在/未发布 → 业务答案就是"不是作者"
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return &pb.BoolResp{Ok: false}, nil
+		}
+		// DB 故障不能吞成 false：调用方会把"查不了"误判成"无权限"，
+		// 该放行的操作被拒、排障时也看不到任何错误信号
+		return nil, status.Error(codes.Internal, "query video owner failed")
 	}
 	return &pb.BoolResp{Ok: v.AuthorID == req.UserId}, nil
 }

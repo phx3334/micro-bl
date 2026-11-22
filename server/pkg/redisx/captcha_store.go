@@ -66,7 +66,10 @@ func (s *RedisCaptchaStore) Set(id string, value string) error {
 		return errors.New("captcha id is empty")
 	}
 	key := s.client.BuildKey("captcha", id)
-	ctx, cancel := context.WithTimeout(context.Background(), captchaExpire)
+	// 命令超时用 Redis 默认的 3s，而不是 captchaExpire（5 分钟）：
+	// captchaExpire 是键的 TTL，不是单次命令的等待时间。误用会让 Redis
+	// 卡住时登录请求一起挂 5 分钟。
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultRedisTimeout)
 	defer cancel()
 	// 使用 SET key value EX <seconds> 一步完成写入与 TTL 设置，
 	// 避免 SET + EXPIRE 两步操作之间崩溃导致 key 永不过期的边界情况。
@@ -91,7 +94,8 @@ func (s *RedisCaptchaStore) Get(id string, clear bool) string {
 		return ""
 	}
 	key := s.client.BuildKey("captcha", id)
-	ctx, cancel := context.WithTimeout(context.Background(), captchaExpire)
+	// 同 Set：命令超时用 DefaultRedisTimeout，不是键 TTL
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultRedisTimeout)
 	defer cancel()
 
 	if clear {

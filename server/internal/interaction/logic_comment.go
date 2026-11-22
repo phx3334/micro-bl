@@ -3,15 +3,18 @@ package interaction
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"fake_tiktok/api/pb"
 	"fake_tiktok/internal/dto/request"
 	"fake_tiktok/internal/model"
+	"fake_tiktok/pkg/apperr"
 	"fake_tiktok/pkg/httpx"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"gorm.io/gorm"
 )
 
 // CommentTargetVideo 评论目标类型（仅视频）
@@ -36,13 +39,20 @@ func NewCommentLogic(deps *LogicDeps) *CommentLogic {
 //  4. 插入评论记录并发布评论数 +1 增量（worker 回刷 videos.comments_count）
 func (l *CommentLogic) CreateComment(ctx context.Context, userID string, req request.CreateCommentReq) (uint64, error) {
 	if req.TargetType != "" && req.TargetType != CommentTargetVideo {
-		return 0, fmt.Errorf("不支持的目标类型: %s", req.TargetType)
+		return 0, apperr.Businessf("不支持的目标类型: %s", req.TargetType)
 	}
 
 	// ---- 跨服务查询目标元信息，校验评论区是否关闭 ----
 	targetInfo, err := l.deps.VideoClient.GetVideo(ctx, req.TargetID)
-	if err != nil || targetInfo == nil {
-		return 0, fmt.Errorf("目标不存在")
+	if err != nil {
+		// NotFound = 视频确实没有（业务，200）；其它 = video-svc 故障（系统，500）
+		if status.Code(err) == codes.NotFound {
+			return 0, apperr.Business("目标不存在")
+		}
+		return 0, apperr.RPC("查询视频失败", err)
+	}
+	if targetInfo == nil {
+		return 0, apperr.Business("目标不存在")
 	}
 
 	// ---- 计算评论层级 ----
@@ -51,7 +61,10 @@ func (l *CommentLogic) CreateComment(ctx context.Context, userID string, req req
 	if req.ParentID != 0 {
 		c, pErr := l.deps.VideoCommentRepo.FindByID(ctx, req.ParentID)
 		if pErr != nil {
-			return 0, fmt.Errorf("父评论不存在")
+			if errors.Is(pErr, gorm.ErrRecordNotFound) {
+				return 0, apperr.Business("父评论不存在")
+			}
+			return 0, apperr.DB("查询父评论失败", pErr)
 		}
 		// 评论层级不再限制为最大 3 层，支持无限嵌套回复
 		level = c.Level + 1
@@ -68,7 +81,7 @@ func (l *CommentLogic) CreateComment(ctx context.Context, userID string, req req
 		CreatedAt: time.Now(),
 	}
 	if err := l.deps.VideoCommentRepo.Create(ctx, c); err != nil {
-		return 0, err
+		return 0, apperr.DB("发布评论失败", err)
 	}
 
 	// 评论数属于 video 库：发 Kafka 增量，由 worker 回刷 comments_count
@@ -88,7 +101,7 @@ func (l *CommentLogic) CreateComment(ctx context.Context, userID string, req req
 // ListComments 分页查询顶级评论 + 每条前 3 条回复
 func (l *CommentLogic) ListComments(ctx context.Context, req request.ListCommentsReq) ([]httpx.CommentItem, int64, error) {
 	if req.TargetType != "" && req.TargetType != CommentTargetVideo {
-		return nil, 0, fmt.Errorf("不支持的目标类型: %s", req.TargetType)
+		return nil, 0, apperr.Businessf("不支持的目标类型: %s", req.TargetType)
 	}
 
 	// 分页默认值
@@ -106,7 +119,7 @@ func (l *CommentLogic) ListComments(ctx context.Context, req request.ListComment
 
 	comments, total, err := l.deps.VideoCommentRepo.FindByVideoID(ctx, uint(req.TargetID), page, pageSize)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, apperr.DB("查询评论列表失败", err)
 	}
 	return l.assembleVideoCommentItems(ctx, comments), total, nil
 }
@@ -170,7 +183,7 @@ func (l *CommentLogic) assembleVideoCommentItems(ctx context.Context, comments [
 // ListReplies 分页查询指定评论的回复
 func (l *CommentLogic) ListReplies(ctx context.Context, req request.ListRepliesReq) ([]httpx.CommentItem, int64, error) {
 	if req.TargetType != "" && req.TargetType != CommentTargetVideo {
-		return nil, 0, fmt.Errorf("不支持的目标类型: %s", req.TargetType)
+		return nil, 0, apperr.Businessf("不支持的目标类型: %s", req.TargetType)
 	}
 
 	page := req.Page
@@ -187,7 +200,7 @@ func (l *CommentLogic) ListReplies(ctx context.Context, req request.ListRepliesR
 
 	replies, total, err := l.deps.VideoCommentRepo.FindReplies(ctx, req.CommentID, page, pageSize)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, apperr.DB("查询回复列表失败", err)
 	}
 	// 递归查询所有层级的回复（支持无限层级嵌套）
 	replies = l.fetchAllCommentDescendants(ctx, replies)
@@ -272,12 +285,12 @@ func commentUserCard(userID string, info *pb.UserInfo) httpx.UserCard {
 // LikeComment 点赞评论（幂等：重复点赞不报错、不重复计数）
 func (l *CommentLogic) LikeComment(ctx context.Context, userID string, req request.CommentLikeReq) error {
 	if req.TargetType != "" && req.TargetType != CommentTargetVideo {
-		return fmt.Errorf("不支持的目标类型: %s", req.TargetType)
+		return apperr.Businessf("不支持的目标类型: %s", req.TargetType)
 	}
 
 	created, err := l.deps.VideoCommentLikeRepo.CreateLike(ctx, userID, req.CommentID)
 	if err != nil {
-		return fmt.Errorf("点赞失败，请稍后重试")
+		return apperr.DB("点赞失败，请稍后重试", err)
 	}
 
 	// 仅首次点赞时更新计数（评论点赞数在本服务库内，可直接写）
@@ -293,21 +306,19 @@ func (l *CommentLogic) LikeComment(ctx context.Context, userID string, req reque
 // UnlikeComment 取消点赞评论（幂等：未点赞时不报错）
 func (l *CommentLogic) UnlikeComment(ctx context.Context, userID string, req request.CommentLikeReq) error {
 	if req.TargetType != "" && req.TargetType != CommentTargetVideo {
-		return fmt.Errorf("不支持的目标类型: %s", req.TargetType)
+		return apperr.Businessf("不支持的目标类型: %s", req.TargetType)
 	}
 
-	exists, err := l.deps.VideoCommentLikeRepo.ExistsLike(ctx, userID, req.CommentID)
+	// 用 DELETE 的原子结果代替"先 Exists 后 Delete"：并发重复取消点赞时
+	// 只有真正删除一行的那次才递减，避免 like_count 被多次 -1
+	deleted, err := l.deps.VideoCommentLikeRepo.DeleteLike(ctx, userID, req.CommentID)
 	if err != nil {
-		return fmt.Errorf("操作失败，请稍后重试")
+		return apperr.DB("取消点赞失败，请稍后重试", err)
 	}
 
 	// 未点赞，幂等返回
-	if !exists {
+	if !deleted {
 		return nil
-	}
-
-	if err := l.deps.VideoCommentLikeRepo.DeleteLike(ctx, userID, req.CommentID); err != nil {
-		return fmt.Errorf("取消点赞失败，请稍后重试")
 	}
 
 	if cerr := l.deps.VideoCommentRepo.IncrementLikeCount(ctx, req.CommentID, -1); cerr != nil {
@@ -320,36 +331,51 @@ func (l *CommentLogic) UnlikeComment(ctx context.Context, userID string, req req
 // DeleteComment 删除评论（仅评论作者或目标 UP 主可删除）
 func (l *CommentLogic) DeleteComment(ctx context.Context, userID string, req request.DeleteCommentReq) error {
 	if req.TargetType != "" && req.TargetType != CommentTargetVideo {
-		return fmt.Errorf("不支持的目标类型: %s", req.TargetType)
+		return apperr.Businessf("不支持的目标类型: %s", req.TargetType)
 	}
 
 	// ---- 查询评论，获取作者 ID 和目标 ID ----
 	c, err := l.deps.VideoCommentRepo.FindByID(ctx, req.CommentID)
 	if err != nil {
-		return fmt.Errorf("评论不存在")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return apperr.Business("评论不存在")
+		}
+		return apperr.DB("查询评论失败", err)
 	}
 
 	// ---- 跨服务查询目标 UP 主，校验权限 ----
 	targetInfo, terr := l.deps.VideoClient.GetVideo(ctx, c.VideoID)
-	if terr != nil || targetInfo == nil {
-		return errors.New("目标不存在")
+	if terr != nil {
+		if status.Code(terr) == codes.NotFound {
+			return apperr.Business("目标不存在")
+		}
+		return apperr.RPC("查询视频失败", terr)
+	}
+	if targetInfo == nil {
+		return apperr.Business("目标不存在")
 	}
 
 	// 仅评论作者或目标 UP 主可删除
 	if c.UserID != userID && targetInfo.AuthorId != userID {
-		return fmt.Errorf("无权限删除")
+		return apperr.Business("无权限删除")
 	}
 
-	// ---- 删除评论 + 发布评论数 -1 增量 ----
-	if err := l.deps.VideoCommentRepo.Delete(ctx, req.CommentID); err != nil {
-		return fmt.Errorf("删除失败，请稍后重试")
+	// ---- 级联删除评论及其全部子回复（含点赞记录） ----
+	// 评论数按实际删除条数递减：CreateComment 对每条评论（含回复）都 +1，
+	// 只减 1 会让计数与实际可见评论数长期偏大。
+	deleted, err := l.deps.VideoCommentRepo.DeleteCascade(ctx, req.CommentID)
+	if err != nil {
+		return apperr.DB("删除评论失败，请稍后重试", err)
+	}
+	if deleted == 0 {
+		return apperr.Business("评论不存在")
 	}
 
-	if cerr := l.deps.CounterPublisher.PublishCommentIncrement(ctx, uint(c.VideoID), -1); cerr != nil {
+	if cerr := l.deps.CounterPublisher.PublishCommentIncrement(ctx, uint(c.VideoID), -deleted); cerr != nil {
 		l.deps.Logger.Warn("发布评论数递减失败",
 			zap.Uint64("target_id", c.VideoID), zap.Error(cerr))
 	}
-	if rerr := l.deps.VideoCacheCounterRepo.IncrementCommentCount(ctx, uint(c.VideoID), -1); rerr != nil {
+	if rerr := l.deps.VideoCacheCounterRepo.IncrementCommentCount(ctx, uint(c.VideoID), -int(deleted)); rerr != nil {
 		l.deps.Logger.Warn("Redis 更新评论数缓存失败",
 			zap.Uint64("target_id", c.VideoID), zap.Error(rerr))
 	}

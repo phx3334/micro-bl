@@ -102,6 +102,12 @@ func (j *JWT) ParseRefreshToken(token string) (*request.JwtCustomRefreshClaims, 
 func (j *JWT) ParseToken(tokenStr string, claims jwt.Claims, secretkey []byte) (jwt.Claims, error) {
 	// 使用不同的变量名避免冲突
 	parsedToken, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+		// 只接受 HMAC 系签名算法。不校验的话，攻击者可把 header 的 alg 换成
+		// RS256/None 等，诱使库把我们传的 []byte 当作公钥解析——典型的
+		// 算法混淆攻击面。本服务只签发 HS256，其它一律拒绝。
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, TokenInvalid
+		}
 		return secretkey, nil
 	})
 	if err != nil {

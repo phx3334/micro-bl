@@ -15,8 +15,9 @@ func RegisterRoutes(publicGroup, privateGroup *gin.RouterGroup, h *HandlerGroup)
 		interactionVideoRouter.POST("unlike", h.InteractionHandler.UnlikeVideo)
 	}
 
-	// 评论
-	commentPublic := interactionRouter.Group("comment")
+	// 评论列表是公开接口：视频详情页是公开路由，未登录用户也要能看评论，
+	// 否则匿名访问会被 401 踢去登录页。写操作（创建/点赞/删除）仍需登录。
+	commentPublic := publicGroup.Group("interaction/comment")
 	{
 		commentPublic.GET("list", h.CommentHandler.ListComments)
 		commentPublic.GET("replies", h.CommentHandler.ListReplies)

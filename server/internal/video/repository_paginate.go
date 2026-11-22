@@ -103,7 +103,12 @@ func extractCursorValues(v reflect.Value, fields []CursorField) []interface{} {
 	var values []interface{}
 	for _, f := range fields {
 		goName := toPascalCase(f.Column)
-		fieldVal := v.FieldByName(goName)
+		// 必须大小写不敏感匹配：toPascalCase("id") 得到 "Id"，而结构体字段是 "ID"，
+		// 精确匹配会漏掉字段导致游标值个数与 Fields 不一致，
+		// 下次翻页时 len(values) != len(Fields) 使游标被静默忽略、永远停在第一页。
+		fieldVal := v.FieldByNameFunc(func(name string) bool {
+			return strings.EqualFold(name, goName)
+		})
 		if fieldVal.IsValid() {
 			values = append(values, fieldVal.Interface())
 		}

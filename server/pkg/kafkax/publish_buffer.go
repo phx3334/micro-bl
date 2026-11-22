@@ -14,7 +14,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
+
+	"fake_tiktok/pkg/otelx"
 )
 
 // defaultBufferCapacity 环形缓冲容量上限：10000 条约占 10MB 内存，单机完全可接受。
@@ -101,15 +105,22 @@ type PublishBuffer struct {
 	logger   *zap.Logger
 
 	drainDone chan struct{}
+
+	// publishTotal 业务指标：事件量与发布健康（topic × result=published|deferred）
+	publishTotal metric.Int64Counter
 }
 
 // NewPublishBuffer 构造缓冲发布器（未启动 drainLoop），调用方需调用 Start(ctx)。
 func NewPublishBuffer(producer *Producer, logger *zap.Logger) *PublishBuffer {
+	// 构造发生在服务 Prepare 阶段，晚于 otelx.Init，拿到的是生效的 MeterProvider
+	publishTotal, _ := otelx.Meter("kafkax").Int64Counter("kafka_publish",
+		metric.WithDescription("Kafka publish attempts by topic and result (published|deferred)"))
 	return &PublishBuffer{
-		producer:  producer,
-		buf:       newRingBuffer(defaultBufferCapacity),
-		logger:    logger,
-		drainDone: make(chan struct{}),
+		producer:     producer,
+		buf:          newRingBuffer(defaultBufferCapacity),
+		logger:       logger,
+		drainDone:    make(chan struct{}),
+		publishTotal: publishTotal,
 	}
 }
 
@@ -121,22 +132,28 @@ func (p *PublishBuffer) Start(ctx context.Context) {
 // Publish 先尝试直发，失败则入缓冲并返回原始错误（供上层感知"刚才是因为 MQ 不可用"）。
 func (p *PublishBuffer) Publish(ctx context.Context, topic, key string, value []byte, headers map[string]string) error {
 	err := p.producer.Publish(ctx, topic, key, value, headers)
-	if err == nil {
-		return nil
+	result := "published"
+	if err != nil {
+		result = "deferred"
+		it := bufferedItem{
+			topic:      topic,
+			key:        key,
+			value:      value,
+			headers:    headers,
+			enqueuedAt: time.Now(),
+		}
+		if !p.buf.push(it) {
+			p.logger.Warn("publish buffer full, dropped oldest",
+				zap.Int("depth", p.buf.depth()),
+				zap.Int64("total_dropped", p.buf.dropped.Load()))
+		}
 	}
 
-	it := bufferedItem{
-		topic:      topic,
-		key:        key,
-		value:      value,
-		headers:    headers,
-		enqueuedAt: time.Now(),
-	}
-	if !p.buf.push(it) {
-		p.logger.Warn("publish buffer full, dropped oldest",
-			zap.Int("depth", p.buf.depth()),
-			zap.Int64("total_dropped", p.buf.dropped.Load()))
-	}
+	// 单点覆盖全部业务事件流：topic 即业务类型（transcode/playcount/likecount/commentcount），
+	// result=deferred 表示 MQ 抖动中走了缓冲（彻底丢弃看 drainLoop 重放日志与 dropped 计数）
+	p.publishTotal.Add(context.Background(), 1, metric.WithAttributes(
+		attribute.String("topic", topic),
+		attribute.String("result", result)))
 	return err
 }
 

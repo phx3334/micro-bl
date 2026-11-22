@@ -2,9 +2,9 @@ package user
 
 import (
 	"context"
-	"fmt"
 
 	"fake_tiktok/internal/dto/request"
+	"fake_tiktok/pkg/apperr"
 	"fake_tiktok/pkg/httpx"
 )
 
@@ -31,7 +31,7 @@ func (l *UserHomeLogic) ListUserVideos(ctx context.Context, req request.ListUser
 
 	resp, err := l.deps.VideoClient.ListUserVideos(ctx, req.UserID, req.Page, req.PageSize)
 	if err != nil {
-		return nil, fmt.Errorf("查询视频列表失败")
+		return nil, apperr.RPC("查询视频列表失败", err)
 	}
 
 	// 获取作者信息（用户名、头像）

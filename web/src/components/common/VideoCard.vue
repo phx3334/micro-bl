@@ -32,10 +32,16 @@ function goVideo() {
   router.push(`/video/${props.video.id}`)
 }
 
-function goUser(e: MouseEvent) {
-  e.stopPropagation()
-  // 跳转到用户主页 - 通过 up_name 无法直接跳转，需要 user_id
-  // VideoCard 中无 user_id 字段，暂不跳转
+// 头像加载失败时兜底到默认头像（而非直接隐藏）；
+// 兜底图本身也失败时才隐藏，避免无限触发 error 事件
+const DEFAULT_AVATAR = '/images/avatar-default.jpg'
+function handleAvatarError(e: Event) {
+  const img = e.target as HTMLImageElement
+  if (!img.src.endsWith(DEFAULT_AVATAR)) {
+    img.src = DEFAULT_AVATAR
+  } else {
+    img.style.display = 'none'
+  }
 }
 </script>
 
@@ -80,7 +86,7 @@ function goUser(e: MouseEvent) {
           :src="video.up_avatar || '/images/avatar-default.jpg'"
           :alt="video.up_name"
           class="w-4 h-4 rounded-full object-cover shrink-0"
-          @error="($event.target as HTMLImageElement).style.display = 'none'"
+          @error="handleAvatarError"
         />
         <span class="truncate">{{ video.up_name }}</span>
       </div>

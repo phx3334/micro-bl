@@ -21,7 +21,11 @@ minio:
   access_key: "${APP_MINIO_ACCESS_KEY:-}"
   secret_key: "${APP_MINIO_SECRET_KEY:-}"
   bucket: ${APP_MINIO_BUCKET:-fake-tiktok}
+  # 单向 TLS：只校验服务端。开启后 endpoint 必须是 <svc>.middleware 这类
+  # 与证书 SAN 一致的地址；根证书由 apps chart 从中间件 Secret 挂到容器内。
   use_ssl: ${APP_MINIO_USE_SSL:-false}
+  tls_ca_file: ${APP_MINIO_TLS_CA_FILE:-/certs/internal-ca.crt}
+  tls_server_name: ${APP_MINIO_TLS_SERVER_NAME:-}
   public_read: ${APP_MINIO_PUBLIC_READ:-true}
   url_expiry: ${APP_MINIO_URL_EXPIRY:-24h}
 
@@ -61,6 +65,10 @@ database:
   max_idle_conns: ${APP_DATABASE_MAX_IDLE_CONNS:-10}
   max_open_conns: ${APP_DATABASE_MAX_OPEN_CONNS:-100}
   auto_migrate: ${APP_DATABASE_AUTO_MIGRATE:-false}
+  # 单向 TLS：只校验服务端（MySQL 不要求客户端证书）。关闭时走明文，便于本地开发。
+  tls_enabled: ${APP_DATABASE_TLS_ENABLED:-false}
+  tls_ca_file: ${APP_DATABASE_TLS_CA_FILE:-/certs/internal-ca.crt}
+  tls_server_name: ${APP_DATABASE_TLS_SERVER_NAME:-}
 
 redis:
   host: ${APP_REDIS_HOST:-redis}
@@ -68,10 +76,21 @@ redis:
   password: "${APP_REDIS_PASSWORD:-}"
   db: ${APP_REDIS_DB:-0}
   key_prefix: ${APP_REDIS_KEY_PREFIX:-feedsystem:v1}
+  # 哨兵：非空时走 FailoverClient（逗号分隔），为空则直连 host:port。
+  # 集群内为 redis.middleware:26379；本地开发留空即可。
+  sentinel_addrs: ${APP_REDIS_SENTINEL_ADDRS:-}
+  master_name: ${APP_REDIS_MASTER_NAME:-mymaster}
+  tls_enabled: ${APP_REDIS_TLS_ENABLED:-false}
+  tls_ca_file: ${APP_REDIS_TLS_CA_FILE:-/certs/internal-ca.crt}
+  tls_server_name: ${APP_REDIS_TLS_SERVER_NAME:-}
 
 kafka:
   brokers:
     - ${APP_KAFKA_BROKERS:-kafka:9092}
+  # 注意：多 broker 时 tls_server_name 留空，由 kafka-go 按实际连接的 broker 回填
+  tls_enabled: ${APP_KAFKA_TLS_ENABLED:-false}
+  tls_ca_file: ${APP_KAFKA_TLS_CA_FILE:-/certs/internal-ca.crt}
+  tls_server_name: ${APP_KAFKA_TLS_SERVER_NAME:-}
 
 # 各服务调用的下游 gRPC 地址。
 # 客户端懒连接：下游未启动不影响本服务启动，仅对应调用会失败。
@@ -82,7 +101,7 @@ grpc:
 
 zap:
   level: ${APP_ZAP_LEVEL:-info}
-  # 输出格式：json 便于容器日志（stdout）被 Alloy/Filebeat 采集；console 更适合本地调试。
+  # 输出格式：json 便于容器日志（stdout）被 otel-collector filelog / Filebeat 采集；console 更适合本地调试。
   format: ${APP_ZAP_FORMAT:-json}
   filename: ${APP_ZAP_FILENAME:-/app/logs/fake_tiktok.log}
   max_size: ${APP_ZAP_MAX_SIZE:-100}
@@ -91,8 +110,8 @@ zap:
   compress: ${APP_ZAP_COMPRESS:-false}
   is_console_print: ${APP_ZAP_IS_CONSOLE_PRINT:-true}
 
-# 可观测性（OpenTelemetry）：Trace 经 OTLP gRPC 推给 otel-collector → Tempo；
-# Metric 走 Prometheus 抓取 /metrics，不做 OTLP push，避免与抓取模型重复。
+# 可观测性（OpenTelemetry）：Trace 与 Metric 都经 OTLP gRPC 推给 otel-collector，
+# collector 内部分流：指标走 prometheus exporter（:8889 供 Prometheus 抓取），链路写 Tempo。
 otel:
   enabled: ${APP_OTEL_ENABLED:-false}
   endpoint: ${APP_OTEL_ENDPOINT:-otel-collector:4317}

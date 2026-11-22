@@ -22,7 +22,7 @@ func InitZap(cfg *config.ZapConfig) *zap.Logger {
 	encoder := getEncoder(cfg.Format)
 
 	// 输出目标：
-	//   - 容器里日志主要靠 stdout 采集（Alloy/Filebeat），所以 IsConsolePrint=true 时始终写 stdout
+	//   - 容器里日志主要靠 stdout 采集（otel-collector filelog / Filebeat），所以 IsConsolePrint=true 时始终写 stdout
 	//   - 本地文件轮转保留给需要留存日志文件的场景；filename 留空则只写 stdout
 	//   - 两个目标都关闭时兜底写 stdout，避免出现"日志静默丢失"的黑洞
 	syncers := make([]zapcore.WriteSyncer, 0, 2)
@@ -42,7 +42,7 @@ func InitZap(cfg *config.ZapConfig) *zap.Logger {
 }
 
 // getEncoder 根据 format 创建编码器：
-//   - json（默认）：结构化日志，便于日志平台按字段检索，也方便 Alloy 采集 stdout
+//   - json（默认）：结构化日志，便于日志平台按字段检索，也方便 otel-collector 采集 stdout
 //   - console：本地调试可读性更好
 func getEncoder(format string) zapcore.Encoder {
 	encoderConfig := zap.NewProductionEncoderConfig()

@@ -39,6 +39,8 @@ async function load() {
       is_followed: props.mode === 'following',
     }))
     total.value = res.total || 0
+  } catch {
+    // 错误提示由请求拦截器统一处理；补 catch 避免未处理的 Promise 拒绝
   } finally {
     loading.value = false
   }
@@ -55,6 +57,8 @@ async function toggleFollow(item: FollowUserItem) {
       await followUser(item.id)
       item.is_followed = true
     }
+  } catch {
+    // 错误提示由请求拦截器统一处理，按钮状态保持原样
   } finally {
     followLoadingId.value = null
   }

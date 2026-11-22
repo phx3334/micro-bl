@@ -27,7 +27,8 @@ func NewBackfillRepo(accountRepo *AccountRepo, followRepo *FollowRepo, userCache
 //
 // 返回值：
 //   - data: 用户缓存数据（成功时返回，失败时返回 nil）
-//   - err: 错误信息（用于上层记录日志，但不阻塞业务返回）
+//   - err: 用户不存在时返回 nil,nil（业务语义）；MySQL 故障返回系统错误，
+//     由上层区分——两者都返回 nil 会把 DB 故障伪装成"用户不存在"
 func (r *BackfillRepo) BackfillUserCache(ctx context.Context, userID string) (*cache.UserCacheData, error) {
 	account, err := r.accountRepo.FindByID(ctx, userID)
 	if err != nil {

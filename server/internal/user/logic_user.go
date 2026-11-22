@@ -14,6 +14,7 @@ import (
 	"fake_tiktok/internal/dto/cache"
 	"fake_tiktok/internal/dto/request"
 	"fake_tiktok/internal/model"
+	"fake_tiktok/pkg/apperr"
 	"fake_tiktok/pkg/auth"
 	"fake_tiktok/pkg/httpx"
 	"fake_tiktok/pkg/otelx"
@@ -22,6 +23,8 @@ import (
 
 	"github.com/bwmarrin/snowflake"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
@@ -34,10 +37,15 @@ type UserLogic struct {
 	// sfGroup 用于缓存击穿保护：同一个 userID 的并发回源请求只执行一次，
 	// 其他请求共享结果，避免大量并发请求同时穿透到 MySQL
 	sfGroup singleflight.Group
+	// loginTotal 业务指标：登录成败三分类（success|client_error|server_error）
+	loginTotal metric.Int64Counter
 }
 
 func NewUserLogic(deps *LogicDeps) *UserLogic {
-	return &UserLogic{deps: deps}
+	// 构造发生在服务 Prepare 阶段，晚于 otelx.Init，拿到的是生效的 MeterProvider
+	counter, _ := otelx.Meter("user-svc").Int64Counter("auth_login",
+		metric.WithDescription("Login attempts by result (success|client_error|server_error)"))
+	return &UserLogic{deps: deps, loginTotal: counter}
 }
 
 // -----------------------------------------------------------------------------
@@ -73,38 +81,59 @@ func (u *UserLogic) Register(ctx context.Context, account model.Account) (model.
 		// 非 ErrRecordNotFound 的错误（如 DB 连接失败）不应被静默忽略，
 		// 否则可能导致重复用户名注册
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.Account{}, fmt.Errorf("check username failed: %w", err)
+			return model.Account{}, apperr.DB("查询用户名失败", err)
 		}
 		// ErrRecordNotFound: 用户名未注册，继续注册流程
 	} else {
-		return model.Account{}, errors.New("username already exists")
+		return model.Account{}, apperr.Business("username already exists")
 	}
 	ensureSnowNode()
 	hashedPwd, err := util.BcryptHash(account.Password)
 	if err != nil {
-		return model.Account{}, fmt.Errorf("failed to hash password: %w", err)
+		return model.Account{}, apperr.Internal("加密密码失败", err)
 	}
 	account.Password = hashedPwd
 	account.ID = snowNode.Generate().String()
 	// 头像为空时前端统一 fallback 到 /images/avatar-default.jpg
 	account.AvatarURL = ""
 	if err := u.deps.AccountRepo.Create(ctx, &account); err != nil {
-		return model.Account{}, err
+		return model.Account{}, apperr.DB("写入用户记录失败", err)
 	}
 	return account, nil
 }
 
 // -----------------------------------------------------------------------------
 
-func (u *UserLogic) Login(ctx context.Context, account model.Account) (model.Account, error) {
+func (u *UserLogic) Login(ctx context.Context, account model.Account) (_ model.Account, retErr error) {
 	// 手动埋点：登录是用户维度排查问题的高频入口，失败原因多（账号不存在/密码错/DB 错）。
 	ctx, span := otelx.Tracer("user-svc").Start(ctx, "user.login")
 	defer span.End()
 
+	// 指标分类直接复用 apperr 的分类结果，保证 HTTP 状态码与 result 标签永远一致：
+	//   业务错误（密码错/账号不存在）→ client_error + HTTP 200
+	//   系统错误（DB 不可用）        → server_error + HTTP 500
+	result := "success"
+	defer func() {
+		if retErr != nil {
+			if apperr.IsSystem(retErr) {
+				result = "server_error"
+			} else {
+				result = "client_error"
+			}
+		}
+		u.loginTotal.Add(context.Background(), 1,
+			metric.WithAttributes(attribute.String("result", result)))
+		span.SetAttributes(attribute.String("login.result", result))
+		// 只有服务端故障给 span 打 Error，尾采 error 策略只捞真正的故障链路
+		if result == "server_error" {
+			span.SetStatus(codes.Error, "login failed: server side")
+		}
+	}()
+
 	user, err := u.deps.AccountRepo.FindByUsername(ctx, account.Username)
 	if err == nil {
 		if !util.BcryptCheck(account.Password, user.Password) {
-			return model.Account{}, errors.New("password error")
+			return model.Account{}, apperr.Business("password error")
 		}
 		// 登录成功后才拿得到 user_id，此时补写属性
 		span.SetAttributes(attribute.String("user_id", user.ID))
@@ -112,13 +141,24 @@ func (u *UserLogic) Login(ctx context.Context, account model.Account) (model.Acc
 		user.AvatarURL = u.avatarURL(ctx, user.AvatarURL)
 		return *user, nil
 	}
-	return model.Account{}, errors.New("user not found")
+	// 区分"账号不存在"（用户问题，200）与"DB 查询失败"（服务故障，500）：
+	// 对外文案都保持 user not found，仅分类与状态码不同——DB 故障不再被记成 user not found。
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.Account{}, apperr.Business("user not found")
+	}
+	return model.Account{}, apperr.DB("查询用户失败", err)
 }
 
 // -----------------------------------------------------------------------------
 
 // getUserCacheData 获取用户缓存数据（Redis 优先，singleflight 防击穿 + StaticHit 降级回源）
-// 供 PersonalInfo 和 UserHome 复用
+// 供 PersonalInfo 和 UserHome 复用。
+//
+// 返回值语义必须三分：
+//   - (data, nil)      命中或回源成功
+//   - (nil, nil)        用户确实不存在（gorm.ErrRecordNotFound）→ 业务错误
+//   - (nil, 系统错误)    MySQL 回源失败 → 系统错误，绝不能退化成 nil,nil，
+//     否则 DB 故障会被上层报成"用户不存在"，前端 200、5xx 错误率 0，故障完全隐身
 func (u *UserLogic) getUserCacheData(ctx context.Context, userID string) (*cache.UserCacheData, error) {
 	var userData *cache.UserCacheData
 	if data, err := u.deps.UserCacheRepo.GetUserCache(ctx, userID); err == nil {
@@ -127,20 +167,31 @@ func (u *UserLogic) getUserCacheData(ctx context.Context, userID string) (*cache
 	if userData == nil {
 		// 全部未命中：走 MySQL 回源（static + dynamic 一起回填）
 		v, sfErr, _ := u.sfGroup.Do("user:"+userID, func() (interface{}, error) {
-			return u.deps.BackfillRepo.BackfillUserCache(ctx, userID)
+			// 共享结果不能绑定首个调用者的请求 ctx，否则其超时/断连会把
+			// context canceled 传染给全部等待者；仓储内部自带超时兜底。
+			return u.deps.BackfillRepo.BackfillUserCache(context.WithoutCancel(ctx), userID)
 		})
 		if sfErr != nil {
 			u.deps.Logger.Warn("BackfillUserCache failed", zap.String("user_id", userID), zap.Error(sfErr))
-		} else if v != nil {
+			if errors.Is(sfErr, gorm.ErrRecordNotFound) {
+				return nil, nil
+			}
+			return nil, apperr.DB("查询用户信息失败", sfErr)
+		}
+		if v != nil {
 			userData = v.(*cache.UserCacheData)
 		}
 	} else if !userData.StaticHit {
 		// 动态区命中但静态区未命中：只对 static 区做降级回源
 		v, sfErr, _ := u.sfGroup.Do("user:static:"+userID, func() (interface{}, error) {
-			return u.deps.BackfillRepo.BackfillUserCache(ctx, userID)
+			// 同上：共享回源结果，脱离首个调用者的取消信号
+			return u.deps.BackfillRepo.BackfillUserCache(context.WithoutCancel(ctx), userID)
 		})
 		if sfErr != nil {
 			u.deps.Logger.Warn("BackfillUserCache static failed", zap.String("user_id", userID), zap.Error(sfErr))
+			if !errors.Is(sfErr, gorm.ErrRecordNotFound) {
+				return nil, apperr.DB("查询用户信息失败", sfErr)
+			}
 		} else if v != nil {
 			backfilled := v.(*cache.UserCacheData)
 			userData.ID = backfilled.ID
@@ -169,7 +220,7 @@ func (u *UserLogic) UserHome(ctx context.Context, viewerID, userID string, page,
 		return nil, err
 	}
 	if userData == nil {
-		return nil, fmt.Errorf("user not found")
+		return nil, apperr.Business("user not found")
 	}
 
 	// ---- 2. 作者视频列表（按时间倒序，使用请求分页参数） ----
@@ -268,15 +319,16 @@ func (u *UserLogic) Logout(userID string, refreshToken string) error {
 	if err := u.deps.JWTRepo.DelJWT(context.Background(), userID); err != nil {
 		u.deps.Logger.Warn("Logout: failed to delete JWT record",
 			zap.String("user_id", userID), zap.Error(err))
-		errs = append(errs, fmt.Errorf("delete JWT: %w", err))
+		errs = append(errs, apperr.Redis("删除登录态失败", err))
 	}
 
 	refreshExpiry, _ := util.ParseDuration(u.deps.Config.JWT.RefreshTokenExpiryTime)
 	if err := u.deps.JWTRepo.ToBlackList(context.Background(), refreshToken, refreshExpiry); err != nil {
 		u.deps.Logger.Warn("Logout: failed to blacklist refresh token",
 			zap.String("user_id", userID), zap.Error(err))
-		errs = append(errs, fmt.Errorf("blacklist refresh token: %w", err))
+		errs = append(errs, apperr.Redis("拉黑刷新令牌失败", err))
 	}
+	// errors.Join 保留全部子错误；apperr.IsSystem 用 errors.As 遍历，任一子错误为系统错误即整体判定为系统错误
 	return errors.Join(errs...)
 }
 
@@ -292,7 +344,7 @@ func (u *UserLogic) UserInfo(ctx context.Context, userID string) (*httpx.UserHom
 		return nil, err
 	}
 	if userData == nil {
-		return nil, fmt.Errorf("user not found")
+		return nil, apperr.Business("user not found")
 	}
 
 	// 统计按需从视频库聚合（gRPC），与 UserHome 保持一致
@@ -321,7 +373,10 @@ func (u *UserLogic) UserInfo(ctx context.Context, userID string) (*httpx.UserHom
 
 func (u *UserLogic) UserChangeInfo(ctx context.Context, req request.UserChangeInfo) error {
 	if _, err := u.deps.AccountRepo.FindByID(ctx, req.UserID); err != nil {
-		return err
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return apperr.Business("user not found")
+		}
+		return apperr.DB("查询用户失败", err)
 	}
 	updates := map[string]interface{}{
 		"username":  req.Username,
@@ -335,7 +390,7 @@ func (u *UserLogic) UserChangeInfo(ctx context.Context, req request.UserChangeIn
 		updates["avatar_url"] = storagex.KeyFromURL(req.Avatar, u.deps.Config.Minio.Bucket)
 	}
 	if err := u.deps.AccountRepo.Updates(ctx, req.UserID, updates); err != nil {
-		return err
+		return apperr.DB("更新用户信息失败", err)
 	}
 	// 静态信息变更后只删除静态区缓存，动态区缓存（计数类）不受影响
 	if err := u.deps.UserCacheRepo.DeleteUserCache(ctx, req.UserID); err != nil {
@@ -427,29 +482,29 @@ const (
 func (u *UserLogic) UploadAvatar(ctx context.Context, userID string, file *multipart.FileHeader) (string, error) {
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	if !allowedImageExt[ext] {
-		return "", errors.New("unsupported image format, only jpg/jpeg/png/gif/webp allowed")
+		return "", apperr.Business("unsupported image format, only jpg/jpeg/png/gif/webp allowed")
 	}
 
 	if file.Size > maxFileSize {
-		return "", fmt.Errorf("file size exceeds limit (%d bytes)", maxFileSize)
+		return "", apperr.Businessf("file size exceeds limit (%d bytes)", maxFileSize)
 	}
 
 	src, err := file.Open()
 	if err != nil {
-		return "", fmt.Errorf("failed to open uploaded file: %w", err)
+		return "", apperr.Internal("读取上传文件失败", err)
 	}
 	defer src.Close()
 
 	// 通过统一对象存储上传（DB 只保存对象 key）。
 	key := fmt.Sprintf("avatar/%s%s", userID, ext)
 	if err := u.deps.Storage.Put(ctx, key, src, file.Size); err != nil {
-		return "", fmt.Errorf("failed to save avatar: %w", err)
+		return "", apperr.Storage("保存头像失败", err)
 	}
 
 	if err := u.deps.AccountRepo.UpdateColumn(ctx, userID, "avatar_url", key); err != nil {
 		// 数据库更新失败：回滚已上传的头像对象，避免存储与 DB 不一致。
 		_ = u.deps.Storage.Delete(ctx, key)
-		return "", fmt.Errorf("failed to update avatar url: %w", err)
+		return "", apperr.DB("更新头像地址失败", err)
 	}
 
 	// 响应返回可访问地址（公开直链或预签名）

@@ -40,6 +40,7 @@ func (i *InteractionHandler) LikeVideo(c *gin.Context) {
 	var req request.InteractionVideo
 	err := c.ShouldBindJSON(&req)
 	if err != nil {
+		// 参数绑定失败是客户端问题，固定 200 + code=4，不能按系统错误走 500
 		httpx.FailWithMsg(c, err.Error())
 		return
 	}
@@ -51,8 +52,7 @@ func (i *InteractionHandler) LikeVideo(c *gin.Context) {
 	}
 	err = i.logic.InteractionLogic.LikeVideo(c.Request.Context(), req)
 	if err != nil {
-		i.logger.Error("Failed to like video:", zap.Error(err))
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithMsg(c, "Successfully like video")
@@ -70,8 +70,7 @@ func (i *InteractionHandler) UnlikeVideo(c *gin.Context) {
 		return
 	}
 	if err := i.logic.InteractionLogic.UnlikeVideo(c.Request.Context(), req); err != nil {
-		i.logger.Error("Failed to unlike video:", zap.Error(err))
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 	httpx.OkWithMsg(c, "Successfully unlike video")
@@ -101,8 +100,7 @@ func (h *CommentHandler) CreateComment(c *gin.Context) {
 
 	commentID, err := h.logic.CommentLogic.CreateComment(c.Request.Context(), userID, req)
 	if err != nil {
-		h.logger.Error("创建评论失败", zap.Error(err))
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 
@@ -118,7 +116,7 @@ func (h *CommentHandler) ListComments(c *gin.Context) {
 
 	list, total, err := h.logic.CommentLogic.ListComments(c.Request.Context(), req)
 	if err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 
@@ -137,7 +135,7 @@ func (h *CommentHandler) ListReplies(c *gin.Context) {
 
 	list, total, err := h.logic.CommentLogic.ListReplies(c.Request.Context(), req)
 	if err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 
@@ -161,7 +159,7 @@ func (h *CommentHandler) LikeComment(c *gin.Context) {
 	}
 
 	if err := h.logic.CommentLogic.LikeComment(c.Request.Context(), userID, req); err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 
@@ -182,7 +180,7 @@ func (h *CommentHandler) UnlikeComment(c *gin.Context) {
 	}
 
 	if err := h.logic.CommentLogic.UnlikeComment(c.Request.Context(), userID, req); err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 
@@ -203,7 +201,7 @@ func (h *CommentHandler) DeleteComment(c *gin.Context) {
 	}
 
 	if err := h.logic.CommentLogic.DeleteComment(c.Request.Context(), userID, req); err != nil {
-		httpx.FailWithMsg(c, err.Error())
+		httpx.FailWithErr(c, err)
 		return
 	}
 

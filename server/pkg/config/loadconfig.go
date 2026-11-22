@@ -47,13 +47,15 @@ type TranscodeConfig struct {
 // MinioConfig MinIO（S3 兼容）对象存储配置。
 // 媒体文件全部写入对象存储，数据库只保存对象 key。
 type MinioConfig struct {
-	Endpoint   string        `mapstructure:"endpoint"`    // 服务地址（host:port，不带 scheme）
-	AccessKey  string        `mapstructure:"access_key"`  // AccessKey
-	SecretKey  string        `mapstructure:"secret_key"`  // SecretKey
-	Bucket     string        `mapstructure:"bucket"`      // 存储桶名称
-	UseSSL     bool          `mapstructure:"use_ssl"`     // 是否使用 TLS
-	PublicRead bool          `mapstructure:"public_read"` // 是否公开直链（true 匿名可读；false 预签名）
-	URLExpiry  time.Duration `mapstructure:"url_expiry"`  // 预签名 URL 有效期
+	Endpoint      string        `mapstructure:"endpoint"`        // 服务地址（host:port，不带 scheme）
+	AccessKey     string        `mapstructure:"access_key"`      // AccessKey
+	SecretKey     string        `mapstructure:"secret_key"`      // SecretKey
+	Bucket        string        `mapstructure:"bucket"`          // 存储桶名称
+	UseSSL        bool          `mapstructure:"use_ssl"`         // 是否使用 TLS（单向：只验服务端）
+	TLSCAFile     string        `mapstructure:"tls_ca_file"`     // 根证书路径；为空则用系统根
+	TLSServerName string        `mapstructure:"tls_server_name"` // 证书 SAN；为空时取 Endpoint 的主机名
+	PublicRead    bool          `mapstructure:"public_read"`     // 是否公开直链（true 匿名可读；false 预签名）
+	URLExpiry     time.Duration `mapstructure:"url_expiry"`      // 预签名 URL 有效期
 }
 
 // FFmpegConfig ffmpeg 转码参数配置
@@ -98,6 +100,11 @@ type DatabaseConfig struct {
 	// 行业标准：建议设为 ConnMaxLifetime 的 1/2 ~ 1/3
 	// 避免空闲连接长期占用资源，同时减少新建连接的开销
 	AutoMigrate bool `mapstructure:"auto_migrate"` // 是否启动时自动迁移
+
+	// 单向 TLS：只校验服务端（中间件出网格后的加密方式）
+	TLSEnabled    bool   `mapstructure:"tls_enabled"`     // 总开关，关闭时保持明文（本地开发用）
+	TLSCAFile     string `mapstructure:"tls_ca_file"`     // 根证书路径，如 /certs/internal-ca.crt
+	TLSServerName string `mapstructure:"tls_server_name"` // 证书 SAN；为空时取 Host
 }
 
 // RedisConfig Redis 配置
@@ -107,17 +114,30 @@ type RedisConfig struct {
 	Password  string `mapstructure:"password"`   // Redis 密码
 	DB        int    `mapstructure:"db"`         // Redis 数据库编号
 	KeyPrefix string `mapstructure:"key_prefix"` // Redis 键前缀
+
+	// 哨兵：sentinel_addrs 非空时走 FailoverClient（逗号分隔，如 redis.middleware:26379），
+	// 为空则直连 host:port（本地开发）。
+	SentinelAddrs string `mapstructure:"sentinel_addrs"`
+	MasterName    string `mapstructure:"master_name"`
+
+	TLSEnabled    bool   `mapstructure:"tls_enabled"`
+	TLSCAFile     string `mapstructure:"tls_ca_file"`
+	TLSServerName string `mapstructure:"tls_server_name"`
 }
 
 // KafkaConfig Kafka 配置
 type KafkaConfig struct {
 	Brokers []string `mapstructure:"brokers"` // broker 地址列表，如 ["kafka:9092"]
+
+	TLSEnabled    bool   `mapstructure:"tls_enabled"`
+	TLSCAFile     string `mapstructure:"tls_ca_file"`
+	TLSServerName string `mapstructure:"tls_server_name"`
 }
 
 // ZapConfig Zap 日志配置
 type ZapConfig struct {
 	Level          string `mapstructure:"level"`            // 日志级别（debug/info/warn/error）
-	Format         string `mapstructure:"format"`           // 输出格式：json（默认，便于 ELK/Alloy 采集）或 console（本地调试更易读）
+	Format         string `mapstructure:"format"`           // 输出格式：json（默认，便于 ELK/otel-collector 采集）或 console（本地调试更易读）
 	Filename       string `mapstructure:"filename"`         // 日志文件路径，留空则只写 stdout
 	MaxSize        int    `mapstructure:"max_size"`         // 单个日志文件最大尺寸（MB）
 	MaxBackups     int    `mapstructure:"max_backups"`      // 保留的旧日志文件最大数量

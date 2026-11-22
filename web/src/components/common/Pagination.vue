@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
 const props = defineProps<{
   current: number
   total: number
@@ -9,11 +11,13 @@ const emit = defineEmits<{
   (e: 'change', page: number): void
 }>()
 
-const pageSize = props.pageSize || 20
-const totalPages = Math.ceil(props.total / pageSize)
+const pageSize = computed(() => props.pageSize || 20)
+// 必须是 computed：total 由接口异步返回，写成普通常量会停留在挂载时的旧值，
+// 导致分页总数不更新（页码不出现 / 翻页边界错误）
+const totalPages = computed(() => Math.ceil(props.total / pageSize.value))
 
 function goPage(page: number) {
-  if (page < 1 || page > totalPages || page === props.current) return
+  if (page < 1 || page > totalPages.value || page === props.current) return
   emit('change', page)
 }
 </script>
