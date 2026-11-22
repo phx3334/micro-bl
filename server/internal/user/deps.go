@@ -1,8 +1,8 @@
 package user
 
 import (
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/storagex"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/storagex"
 
 	"github.com/mojocn/base64Captcha"
 	"go.uber.org/zap"

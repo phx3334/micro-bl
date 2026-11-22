@@ -381,7 +381,7 @@ const file_api_proto_user_proto_rawDesc = "" +
 	"\vUserService\x12+\n" +
 	"\aGetUser\x12\x10.user.GetUserReq\x1a\x0e.user.UserInfo\x121\n" +
 	"\bGetUsers\x12\x11.user.GetUsersReq\x1a\x12.user.GetUsersResp\x12:\n" +
-	"\vIsFollowing\x12\x14.user.IsFollowingReq\x1a\x15.user.IsFollowingRespB\x14Z\x12fake_tiktok/api/pbb\x06proto3"
+	"\vIsFollowing\x12\x14.user.IsFollowingReq\x1a\x15.user.IsFollowingRespB\x14Z\x12micro-bl/api/pbb\x06proto3"
 
 var (
 	file_api_proto_user_proto_rawDescOnce sync.Once

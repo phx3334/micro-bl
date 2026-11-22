@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"fake_tiktok/pkg/otelx"
+	"micro-bl/pkg/otelx"
 )
 
 // GinLogger 返回 Gin 请求日志中间件，使用依赖注入的 logger

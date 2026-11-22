@@ -130,7 +130,7 @@ const file_api_proto_interaction_proto_rawDesc = "" +
 	"\x0eVideoUserState\x12&\n" +
 	"\x0fliked_video_ids\x18\x01 \x03(\x04R\rlikedVideoIds2i\n" +
 	"\x12InteractionService\x12S\n" +
-	"\x11GetVideoUserState\x12!.interaction.GetVideoUserStateReq\x1a\x1b.interaction.VideoUserStateB\x14Z\x12fake_tiktok/api/pbb\x06proto3"
+	"\x11GetVideoUserState\x12!.interaction.GetVideoUserStateReq\x1a\x1b.interaction.VideoUserStateB\x14Z\x12micro-bl/api/pbb\x06proto3"
 
 var (
 	file_api_proto_interaction_proto_rawDescOnce sync.Once

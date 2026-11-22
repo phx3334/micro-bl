@@ -1,7 +1,7 @@
 package video
 
 import (
-	"fake_tiktok/internal/dto/request"
+	"micro-bl/internal/dto/request"
 )
 
 // 游标分页选项（列表统一用游标翻页，offset 分页已随旧列表接口一并移除）

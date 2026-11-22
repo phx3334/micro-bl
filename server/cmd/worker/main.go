@@ -23,14 +23,14 @@ import (
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 
-	"fake_tiktok/internal/video"
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/gormx"
-	"fake_tiktok/pkg/kafkax"
-	"fake_tiktok/pkg/log"
-	"fake_tiktok/pkg/otelx"
-	"fake_tiktok/pkg/redisx"
-	"fake_tiktok/pkg/storagex"
+	"micro-bl/internal/video"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/gormx"
+	"micro-bl/pkg/kafkax"
+	"micro-bl/pkg/log"
+	"micro-bl/pkg/otelx"
+	"micro-bl/pkg/redisx"
+	"micro-bl/pkg/storagex"
 )
 
 func main() {

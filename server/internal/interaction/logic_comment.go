@@ -5,11 +5,11 @@ import (
 	"errors"
 	"time"
 
-	"fake_tiktok/api/pb"
-	"fake_tiktok/internal/dto/request"
-	"fake_tiktok/internal/model"
-	"fake_tiktok/pkg/apperr"
-	"fake_tiktok/pkg/httpx"
+	"micro-bl/api/pb"
+	"micro-bl/internal/dto/request"
+	"micro-bl/internal/model"
+	"micro-bl/pkg/apperr"
+	"micro-bl/pkg/httpx"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"

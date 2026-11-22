@@ -15,8 +15,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/plugin/opentelemetry/tracing"
 
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/tlsx"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/tlsx"
 )
 
 func InitGorm(cfg *config.Config) *gorm.DB {
@@ -47,7 +47,7 @@ func InitGorm(cfg *config.Config) *gorm.DB {
 			zap.L().Error("构造 MySQL TLS 配置失败", zap.Error(err))
 			os.Exit(1)
 		}
-		const tlsName = "fake-tiktok-internal"
+		const tlsName = "micro-bl-internal"
 		if err := mysqldrv.RegisterTLSConfig(tlsName, tlsCfg); err != nil {
 			zap.L().Error("注册 MySQL TLS 配置失败", zap.Error(err))
 			os.Exit(1)

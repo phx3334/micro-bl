@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"fake_tiktok/internal/model"
+	"micro-bl/internal/model"
 
 	"gorm.io/gorm"
 )

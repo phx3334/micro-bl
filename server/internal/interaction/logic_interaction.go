@@ -3,8 +3,8 @@ package interaction
 import (
 	"context"
 
-	"fake_tiktok/internal/dto/request"
-	"fake_tiktok/pkg/apperr"
+	"micro-bl/internal/dto/request"
+	"micro-bl/pkg/apperr"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"

@@ -30,7 +30,7 @@
 ## 目录结构
 
 ```
-fake_tiktok/
+micro-bl/
 ├── server/                          # Go 后端（4 个进程入口）
 │   ├── cmd/                         #   user / video / interaction / worker
 │   ├── internal/                    #   业务域（user / video / interaction / model / dto）
@@ -89,7 +89,7 @@ kubectl -n observability port-forward svc/tempo 3200:3200
 # Harbor / MinIO 证书的 IP SAN 只签这一台，填别的节点会 x509 失败。
 grep -rn "REPLACE_WITH_SERVER_IP" project-infra
 
-# 浏览器播放 MinIO 视频前，把内部根 CA（fake-tiktok-ca 的 ca.crt）导入系统/浏览器信任库
+# 浏览器播放 MinIO 视频前，把内部根 CA（micro-bl-ca 的 ca.crt）导入系统/浏览器信任库
 ```
 
 ## 依赖
@@ -117,7 +117,7 @@ grep -rn "REPLACE_WITH_SERVER_IP" project-infra
 | `APP_KAFKA_BROKERS` | Kafka broker 地址 | `localhost:9092` |
 | `APP_MINIO_ENDPOINT` | MinIO 地址（host:port） | `localhost:9000` / 集群内 `minio:9000` |
 | `APP_MINIO_ACCESS_KEY` / `APP_MINIO_SECRET_KEY` | MinIO 凭证（K8s 中来自 Secret） | 空（必填） |
-| `APP_MINIO_BUCKET` | 对象存储桶（启动时自动创建） | `fake-tiktok` |
+| `APP_MINIO_BUCKET` | 对象存储桶（启动时自动创建） | `micro-bl` |
 | `APP_MINIO_USE_SSL` | MinIO 是否走 TLS | `false` |
 | `APP_MINIO_PUBLIC_READ` | `true` 公开直链；`false` 预签名 URL | `true` |
 | `APP_MINIO_URL_EXPIRY` | 预签名 URL 有效期（Go duration） | `24h` |

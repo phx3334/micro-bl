@@ -3,9 +3,9 @@ package user
 import (
 	"context"
 
-	"fake_tiktok/internal/dto/request"
-	"fake_tiktok/pkg/apperr"
-	"fake_tiktok/pkg/httpx"
+	"micro-bl/internal/dto/request"
+	"micro-bl/pkg/apperr"
+	"micro-bl/pkg/httpx"
 
 	"go.uber.org/zap"
 )

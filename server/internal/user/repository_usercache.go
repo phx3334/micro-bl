@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"fake_tiktok/internal/dto/cache"
-	"fake_tiktok/pkg/redisx"
+	"micro-bl/internal/dto/cache"
+	"micro-bl/pkg/redisx"
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"

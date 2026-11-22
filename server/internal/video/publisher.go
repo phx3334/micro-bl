@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"strconv"
 
-	"fake_tiktok/internal/dto/cache"
-	"fake_tiktok/pkg/kafkax"
+	"micro-bl/internal/dto/cache"
+	"micro-bl/pkg/kafkax"
 )
 
 // PlayCountPublisher 把"播放量 +1"事件发布到 Kafka video.playcount。

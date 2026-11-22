@@ -18,7 +18,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
-	"fake_tiktok/pkg/otelx"
+	"micro-bl/pkg/otelx"
 )
 
 // defaultBufferCapacity 环形缓冲容量上限：10000 条约占 10MB 内存，单机完全可接受。

@@ -7,9 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"fake_tiktok/internal/dto/request"
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/httpx"
+	"micro-bl/internal/dto/request"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/httpx"
 )
 
 // TokenBlacklist 由 user-svc 提供实现；其它服务传 nil 表示不做黑名单校验

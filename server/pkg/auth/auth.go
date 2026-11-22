@@ -6,8 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"fake_tiktok/internal/dto/request"
-	"fake_tiktok/pkg/config"
+	"micro-bl/internal/dto/request"
+	"micro-bl/pkg/config"
 )
 
 func GetAccessToken(c *gin.Context) string {

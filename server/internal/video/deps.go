@@ -1,9 +1,9 @@
 package video
 
 import (
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/redisx"
-	"fake_tiktok/pkg/storagex"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/redisx"
+	"micro-bl/pkg/storagex"
 
 	"go.uber.org/zap"
 )

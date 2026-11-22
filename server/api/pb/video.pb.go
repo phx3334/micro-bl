@@ -651,7 +651,7 @@ const file_api_proto_video_proto_rawDesc = "" +
 	"\tGetVideos\x12\x13.video.GetVideosReq\x1a\x14.video.GetVideosResp\x12@\n" +
 	"\x0eListUserVideos\x12\x18.video.ListUserVideosReq\x1a\x14.video.VideoListResp\x128\n" +
 	"\fGetUserStats\x12\x16.video.GetUserStatsReq\x1a\x10.video.UserStats\x127\n" +
-	"\fIsVideoOwner\x12\x16.video.IsVideoOwnerReq\x1a\x0f.video.BoolRespB\x14Z\x12fake_tiktok/api/pbb\x06proto3"
+	"\fIsVideoOwner\x12\x16.video.IsVideoOwnerReq\x1a\x0f.video.BoolRespB\x14Z\x12micro-bl/api/pbb\x06proto3"
 
 var (
 	file_api_proto_video_proto_rawDescOnce sync.Once

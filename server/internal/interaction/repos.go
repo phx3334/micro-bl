@@ -3,8 +3,8 @@ package interaction
 import (
 	"context"
 
-	"fake_tiktok/pkg/kafkax"
-	"fake_tiktok/pkg/redisx"
+	"micro-bl/pkg/kafkax"
+	"micro-bl/pkg/redisx"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"

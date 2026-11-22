@@ -20,7 +20,7 @@ minio:
   endpoint: ${APP_MINIO_ENDPOINT:-minio:9000}
   access_key: "${APP_MINIO_ACCESS_KEY:-}"
   secret_key: "${APP_MINIO_SECRET_KEY:-}"
-  bucket: ${APP_MINIO_BUCKET:-fake-tiktok}
+  bucket: ${APP_MINIO_BUCKET:-micro-bl}
   # 单向 TLS：只校验服务端。开启后 endpoint 必须是 <svc>.middleware 这类
   # 与证书 SAN 一致的地址；根证书由 apps chart 从中间件 Secret 挂到容器内。
   use_ssl: ${APP_MINIO_USE_SSL:-false}
@@ -45,7 +45,7 @@ jwt:
   refresh_token_secret: "${APP_JWT_REFRESH_TOKEN_SECRET:-}"
   access_token_expiry_time: ${APP_JWT_ACCESS_TOKEN_EXPIRY_TIME:-15m}
   refresh_token_expiry_time: ${APP_JWT_REFRESH_TOKEN_EXPIRY_TIME:-7d}
-  issuer: ${APP_JWT_ISSUER:-fake_tiktok}
+  issuer: ${APP_JWT_ISSUER:-micro-bl}
 
 captcha:
   height: ${APP_CAPTCHA_HEIGHT:-80}
@@ -103,7 +103,7 @@ zap:
   level: ${APP_ZAP_LEVEL:-info}
   # 输出格式：json 便于容器日志（stdout）被 otel-collector filelog / Filebeat 采集；console 更适合本地调试。
   format: ${APP_ZAP_FORMAT:-json}
-  filename: ${APP_ZAP_FILENAME:-/app/logs/fake_tiktok.log}
+  filename: ${APP_ZAP_FILENAME:-/app/logs/micro-bl.log}
   max_size: ${APP_ZAP_MAX_SIZE:-100}
   max_backups: ${APP_ZAP_MAX_BACKUPS:-15}
   max_age: ${APP_ZAP_MAX_AGE:-15}
@@ -117,7 +117,7 @@ otel:
   endpoint: ${APP_OTEL_ENDPOINT:-otel-collector:4317}
   # 采样率 1.0 表示全量采样；线上流量大时可按比例下调。
   sample_ratio: ${APP_OTEL_SAMPLE_RATIO:-1.0}
-  service_name: ${APP_OTEL_SERVICE_NAME:-fake_tiktok}
+  service_name: ${APP_OTEL_SERVICE_NAME:-micro-bl}
   environment: ${APP_OTEL_ENVIRONMENT:-local}
   version: ${APP_OTEL_VERSION:-dev}
 

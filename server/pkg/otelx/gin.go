@@ -24,7 +24,7 @@ const (
 //
 // 必须注册在 GinLogger 之前：日志中间件依赖本中间件写回请求 ctx 与 trace_id。
 func GinMiddleware() gin.HandlerFunc {
-	tracer := otel.Tracer("fake_tiktok/http")
+	tracer := otel.Tracer("micro-bl/http")
 
 	return func(c *gin.Context) {
 		// 1. 续接上游链路：有 traceparent 就复用 trace，没有则新建。

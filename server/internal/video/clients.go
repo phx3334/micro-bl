@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"fake_tiktok/api/pb"
+	"micro-bl/api/pb"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"

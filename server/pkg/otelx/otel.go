@@ -32,13 +32,13 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
 
-	"fake_tiktok/pkg/config"
+	"micro-bl/pkg/config"
 )
 
 // 默认值集中在这里，避免每个服务的 yaml 都要写一遍。
 const (
 	defaultEndpoint    = "otel-collector:4317"
-	defaultServiceName = "fake_tiktok"
+	defaultServiceName = "micro-bl"
 	defaultEnvironment = "docker"
 	defaultVersion     = "dev"
 )

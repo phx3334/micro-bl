@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"fake_tiktok/pkg/redisx"
+	"micro-bl/pkg/redisx"
 
 	"github.com/redis/go-redis/v9"
 )

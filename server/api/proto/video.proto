@@ -3,7 +3,7 @@ syntax = "proto3";
 // 视频服务契约：拆服务后由 video-svc 提供，供 user/interaction 服务读取视频信息与统计。
 package video;
 
-option go_package = "fake_tiktok/api/pb";
+option go_package = "micro-bl/api/pb";
 
 service VideoService {
   rpc GetVideo(GetVideoReq) returns (VideoBrief);

@@ -1,7 +1,7 @@
 // Package tlsx 统一内部中间件「单向 TLS」的客户端配置。
 //
 // 单向指：只校验服务端证书（RootCAs + ServerName），客户端不出示证书。
-// 服务端证书由 cert-manager 的 fake-tiktok-ca-issuer 签发，根证书以文件形式
+// 服务端证书由 cert-manager 的 micro-bl-ca-issuer 签发，根证书以文件形式
 // 挂进容器（约定路径 /certs/internal-ca.crt，可通过配置覆盖）。
 package tlsx
 

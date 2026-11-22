@@ -1,6 +1,6 @@
 package cache
 
-import "fake_tiktok/internal/model"
+import "micro-bl/internal/model"
 
 // UserCacheData 用户缓存组合数据（静态 + 动态），供 logic 层使用。
 // Redis 存储层拆分为 user:static 和 user:dynamic 两个 Hash，

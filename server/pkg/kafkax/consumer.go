@@ -9,8 +9,8 @@ import (
 	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
 
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/otelx"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/otelx"
 )
 
 // NewReader 创建消费组 Reader。

@@ -26,15 +26,15 @@ import (
 	"google.golang.org/grpc"
 	"gorm.io/gorm"
 
-	"fake_tiktok/pkg/auth"
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/gormx"
-	"fake_tiktok/pkg/httpx"
-	"fake_tiktok/pkg/kafkax"
-	"fake_tiktok/pkg/log"
-	"fake_tiktok/pkg/otelx"
-	"fake_tiktok/pkg/redisx"
-	"fake_tiktok/pkg/storagex"
+	"micro-bl/pkg/auth"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/gormx"
+	"micro-bl/pkg/httpx"
+	"micro-bl/pkg/kafkax"
+	"micro-bl/pkg/log"
+	"micro-bl/pkg/otelx"
+	"micro-bl/pkg/redisx"
+	"micro-bl/pkg/storagex"
 )
 
 // Deps 是骨架交给业务回调的运行时依赖。

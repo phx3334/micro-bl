@@ -1,7 +1,7 @@
 package user
 
 import (
-	"fake_tiktok/pkg/redisx"
+	"micro-bl/pkg/redisx"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"

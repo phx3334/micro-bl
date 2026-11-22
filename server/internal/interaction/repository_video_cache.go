@@ -4,7 +4,7 @@ import (
 	"context"
 	"strconv"
 
-	"fake_tiktok/pkg/redisx"
+	"micro-bl/pkg/redisx"
 )
 
 // VideoCacheCounterRepo 互动操作对"视频动态计数缓存"的即时更新。

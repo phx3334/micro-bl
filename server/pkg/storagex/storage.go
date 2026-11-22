@@ -24,8 +24,8 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/tlsx"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/tlsx"
 )
 
 // newClientOptions 构造 minio 客户端选项。

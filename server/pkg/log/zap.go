@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 
-	"fake_tiktok/pkg/config"
+	"micro-bl/pkg/config"
 )
 
 // InitZap 根据配置初始化 Zap 日志实例

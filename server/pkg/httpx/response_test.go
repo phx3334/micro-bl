@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"fake_tiktok/pkg/apperr"
+	"micro-bl/pkg/apperr"
 )
 
 func newTestContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {

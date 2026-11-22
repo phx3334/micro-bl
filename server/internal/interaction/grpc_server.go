@@ -3,7 +3,7 @@ package interaction
 import (
 	"context"
 
-	"fake_tiktok/api/pb"
+	"micro-bl/api/pb"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

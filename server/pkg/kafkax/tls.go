@@ -3,8 +3,8 @@ package kafkax
 import (
 	"crypto/tls"
 
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/tlsx"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/tlsx"
 )
 
 // tlsConfig 按配置构造「只验服务端」的 TLS 配置；未开启时返回 nil，调用方保持原行为。

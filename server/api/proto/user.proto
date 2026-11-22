@@ -3,7 +3,7 @@ syntax = "proto3";
 // 用户服务契约：拆服务后由 user-svc 提供，video/interaction 服务按需调用。
 package user;
 
-option go_package = "fake_tiktok/api/pb";
+option go_package = "micro-bl/api/pb";
 
 service UserService {
   rpc GetUser(GetUserReq) returns (UserInfo);

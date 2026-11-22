@@ -11,9 +11,9 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/kafkax"
-	"fake_tiktok/pkg/otelx"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/kafkax"
+	"micro-bl/pkg/otelx"
 )
 
 // incrementMsg 三类计数增量消息（play/like/comment）字段结构完全相同：

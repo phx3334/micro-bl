@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"fake_tiktok/api/pb"
-	"fake_tiktok/internal/model"
-	"fake_tiktok/pkg/storagex"
+	"micro-bl/api/pb"
+	"micro-bl/internal/model"
+	"micro-bl/pkg/storagex"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

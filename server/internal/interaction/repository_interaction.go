@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"fake_tiktok/internal/model"
+	"micro-bl/internal/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"

@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"fake_tiktok/pkg/apperr"
+	"micro-bl/pkg/apperr"
 )
 
 // Response 统一响应体。

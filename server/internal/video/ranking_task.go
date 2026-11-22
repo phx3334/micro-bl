@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"fake_tiktok/internal/model"
-	"fake_tiktok/pkg/redisx"
-	"fake_tiktok/pkg/util/lock"
+	"micro-bl/internal/model"
+	"micro-bl/pkg/redisx"
+	"micro-bl/pkg/util/lock"
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"

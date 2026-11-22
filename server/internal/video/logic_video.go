@@ -11,12 +11,12 @@ import (
 
 	"gorm.io/gorm"
 
-	"fake_tiktok/internal/dto/cache"
-	"fake_tiktok/internal/dto/request"
-	"fake_tiktok/internal/model"
-	"fake_tiktok/pkg/apperr"
-	"fake_tiktok/pkg/httpx"
-	"fake_tiktok/pkg/util"
+	"micro-bl/internal/dto/cache"
+	"micro-bl/internal/dto/request"
+	"micro-bl/internal/model"
+	"micro-bl/pkg/apperr"
+	"micro-bl/pkg/httpx"
+	"micro-bl/pkg/util"
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"

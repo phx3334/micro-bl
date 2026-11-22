@@ -1,7 +1,7 @@
 package interaction
 
 import (
-	"fake_tiktok/pkg/config"
+	"micro-bl/pkg/config"
 
 	"go.uber.org/zap"
 )

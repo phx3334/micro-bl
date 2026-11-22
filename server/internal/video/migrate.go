@@ -1,7 +1,7 @@
 package video
 
 import (
-	"fake_tiktok/internal/model"
+	"micro-bl/internal/model"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"

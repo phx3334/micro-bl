@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"fake_tiktok/pkg/redisx"
+	"micro-bl/pkg/redisx"
 
 	"go.uber.org/zap"
 )

@@ -1,7 +1,7 @@
 package cache
 
 import (
-	"fake_tiktok/internal/model"
+	"micro-bl/internal/model"
 	"time"
 )
 

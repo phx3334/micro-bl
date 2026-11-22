@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"fake_tiktok/internal/dto/cache"
+	"micro-bl/internal/dto/cache"
 )
 
 // BackfillRepo 用户缓存回源：账户信息、粉丝数与关注数都在本服务的 feed_user 库内，

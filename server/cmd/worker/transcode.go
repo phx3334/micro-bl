@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"fake_tiktok/internal/dto/cache"
-	"fake_tiktok/internal/model"
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/kafkax"
-	"fake_tiktok/pkg/otelx"
-	"fake_tiktok/pkg/storagex"
+	"micro-bl/internal/dto/cache"
+	"micro-bl/internal/model"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/kafkax"
+	"micro-bl/pkg/otelx"
+	"micro-bl/pkg/storagex"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -134,7 +134,7 @@ func transcodeOne(ctx context.Context, msg cache.TranscodeMsg, db *gorm.DB, stor
 	}
 
 	// 2. 本机临时目录：下载源文件 + 存放 ffmpeg 产物，函数结束时整体清理
-	tmpDir, err := os.MkdirTemp("", "fake-tiktok-transcode-*")
+	tmpDir, err := os.MkdirTemp("", "micro-bl-transcode-*")
 	if err != nil {
 		failReason := truncateErr(fmt.Sprintf("create temp dir failed: %v", err))
 		_ = db.WithContext(ctx).Model(&model.Video{}).

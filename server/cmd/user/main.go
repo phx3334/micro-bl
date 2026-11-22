@@ -8,10 +8,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc"
 
-	"fake_tiktok/api/pb"
-	"fake_tiktok/internal/user"
-	"fake_tiktok/pkg/appboot"
-	"fake_tiktok/pkg/redisx"
+	"micro-bl/api/pb"
+	"micro-bl/internal/user"
+	"micro-bl/pkg/appboot"
+	"micro-bl/pkg/redisx"
 )
 
 func main() {

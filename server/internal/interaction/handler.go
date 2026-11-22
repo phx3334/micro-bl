@@ -1,9 +1,9 @@
 package interaction
 
 import (
-	"fake_tiktok/internal/dto/request"
-	"fake_tiktok/pkg/auth"
-	"fake_tiktok/pkg/httpx"
+	"micro-bl/internal/dto/request"
+	"micro-bl/pkg/auth"
+	"micro-bl/pkg/httpx"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"

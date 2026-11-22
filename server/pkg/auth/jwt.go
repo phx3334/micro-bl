@@ -10,9 +10,9 @@ import (
 
 	"github.com/golang-jwt/jwt/v4"
 
-	"fake_tiktok/internal/dto/request"
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/util"
+	"micro-bl/internal/dto/request"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/util"
 )
 
 type JWT struct {

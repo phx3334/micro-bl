@@ -3,10 +3,10 @@ package video
 import (
 	"context"
 
-	"fake_tiktok/api/pb"
-	"fake_tiktok/internal/dto/cache"
-	"fake_tiktok/internal/model"
-	"fake_tiktok/pkg/storagex"
+	"micro-bl/api/pb"
+	"micro-bl/internal/dto/cache"
+	"micro-bl/internal/model"
+	"micro-bl/pkg/storagex"
 
 	"go.uber.org/zap"
 )

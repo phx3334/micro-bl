@@ -15,9 +15,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
-	"fake_tiktok/pkg/config"
-	"fake_tiktok/pkg/otelx"
-	"fake_tiktok/pkg/tlsx"
+	"micro-bl/pkg/config"
+	"micro-bl/pkg/otelx"
+	"micro-bl/pkg/tlsx"
 )
 
 // RedisConn 封装 Redis 连接和键前缀配置。

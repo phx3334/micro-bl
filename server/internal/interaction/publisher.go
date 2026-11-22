@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"strconv"
 
-	"fake_tiktok/internal/dto/cache"
-	"fake_tiktok/pkg/kafkax"
+	"micro-bl/internal/dto/cache"
+	"micro-bl/pkg/kafkax"
 )
 
 // CounterPublisher 互动计数增量发布器。

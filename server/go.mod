@@ -1,4 +1,4 @@
-module fake_tiktok
+module micro-bl
 
 go 1.26.1
 

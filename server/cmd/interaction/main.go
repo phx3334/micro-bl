@@ -8,9 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc"
 
-	"fake_tiktok/api/pb"
-	"fake_tiktok/internal/interaction"
-	"fake_tiktok/pkg/appboot"
+	"micro-bl/api/pb"
+	"micro-bl/internal/interaction"
+	"micro-bl/pkg/appboot"
 )
 
 func main() {
