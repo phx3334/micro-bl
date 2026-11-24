@@ -68,8 +68,8 @@ micro-bl/
 | 组件 | 地址 | 用途 |
 |------|------|------|
 | 前端 + API | `http://<master1-IP>:30080` | web 页面与 `/api/v1/*`（Istio ingressgateway） |
-| Harbor | `https://<master1-IP>:30003` | 镜像仓库（admin / 147258） |
-| ArgoCD | `http://<master1-IP>:30082` | GitOps（admin / 147258） |
+| Harbor | `https://<master1-IP>:30003` | 镜像仓库（账号 admin，密码不入库） |
+| ArgoCD | `http://<master1-IP>:30082` | GitOps（账号 admin，密码不入库） |
 | Tekton webhook | `http://<master1-IP>:30081` | GitHub Webhook Payload URL |
 | Grafana | `http://<master1-IP>:30300` | 统一看板（phx / 见 grafana-admin Secret） |
 | MinIO API | `https://<master1-IP>:30900` | 视频/封面/头像直链（内部 CA 签发，浏览器需信任 CA） |
