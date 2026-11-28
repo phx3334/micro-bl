@@ -158,8 +158,3 @@ manifest 仓库中的 Chart 渲染的资源：3 个 HTTP+gRPC 服务（Deploymen
 - **业务服务之间不加启动依赖**：gRPC 客户端懒连接，下游未就绪只影响单次调用。
 - **灰度发布**：把 Deployment 换成 Argo Rollouts 的 `Rollout` 即可接 Prometheus 指标门禁，当前 Chart 保持最小依赖默认用原生 Deployment。
 
-## 常用说明
-
-- **Redis 持久化**：RDB + AOF 混合模式，配置由 manifest 仓库维护。
-- **默认头像**：前端静态兜底 `web/public/images/avatar-default.jpg`，注册用户头像为空时直接使用；不再依赖服务端种子文件或 uploads 目录。
-- **上传超时**：HTTP 读写超时、handler context、Istio VirtualService（1800s）与前端 axios 统一为 1 小时；API 不再经 nginx 反代，nginx 只托管静态资源。
